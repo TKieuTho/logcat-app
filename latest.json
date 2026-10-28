@@ -1,6 +1,6 @@
 {
-  "version": "0.4.0",
-  "date": "2026-10-27",
-  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.4.0/Logcat-0.4.0-macOS-arm64.zip",
-  "notes": "Thêm Check for Updates, giao diện mèo nền trắng, đổi tên app thành Logcat."
+  "version": "0.5.0",
+  "date": "2026-10-28",
+  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.5.0/Logcat-0.5.0-macOS-arm64.zip",
+  "notes": "Ghi nhận User Properties, thêm chế độ xem Detailed (thẻ + tham số), hướng dẫn khi macOS chặn app."
 }
