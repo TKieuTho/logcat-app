@@ -44,9 +44,9 @@ struct ContentView: View {
         }
         .alert("Có bản cập nhật Logcat", isPresented: $model.showUpdateAlert) {
             Button("Để sau", role: .cancel) {}
-            Button("Tải về") { model.openUpdateDownload() }
+            Button("Cập nhật ngay") { model.installUpdate() }
         } message: {
-            Text("Bản \(model.updateInfo?.version ?? "") (đang dùng \(Updater.currentVersion)).\n\(model.updateInfo?.notes ?? "")\n\nTải về, giải nén rồi kéo Logcat.app vào Applications và chọn Replace.")
+            Text("Bản \(model.updateInfo?.version ?? "") (đang dùng \(Updater.currentVersion)).\n\(model.updateInfo?.notes ?? "")\n\nApp sẽ tự tải, thay bản mới và mở lại.")
         }
         .alert("Logcat", isPresented: Binding(get: { model.updateMessage != nil }, set: { if !$0 { model.updateMessage = nil } })) {
             Button("OK") { model.updateMessage = nil }

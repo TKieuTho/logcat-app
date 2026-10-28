@@ -25,6 +25,7 @@ final class StudioModel: ObservableObject {
     @Published var updateInfo: UpdateInfo?
     @Published var showUpdateAlert = false
     @Published var updateMessage: String?
+    @Published var isInstallingUpdate = false
 
     private let adb = ADBService()
     private var streamProcesses: [String: Process] = [:]
@@ -67,6 +68,21 @@ final class StudioModel: ObservableObject {
                 }
             } catch {
                 if manual { updateMessage = "Không kiểm tra được bản cập nhật: \(error.localizedDescription)" }
+            }
+        }
+    }
+    func installUpdate() {
+        guard let info = updateInfo, !isInstallingUpdate else { return }
+        isInstallingUpdate = true
+        statusText = "Đang tải bản \(info.version)…"
+        Task {
+            do {
+                try await Updater.install(info)
+                NSApp.terminate(nil)
+            } catch {
+                isInstallingUpdate = false
+                updateMessage = "Không tự cập nhật được: \(error.localizedDescription)\nMở trang tải về để cập nhật thủ công."
+                openUpdateDownload()
             }
         }
     }
