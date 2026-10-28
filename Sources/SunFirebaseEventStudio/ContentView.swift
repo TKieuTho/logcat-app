@@ -141,19 +141,21 @@ struct ContentView: View {
             HStack {
                 Text("EVENTS").font(.caption.bold()).foregroundStyle(.secondary)
                 Spacer()
-                Text("\(model.visibleEvents.count) events").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                Picker("", selection: $model.kindFilter) {
+                    ForEach(KindFilter.allCases) { Text($0.rawValue).tag($0) }
+                }.pickerStyle(.segmented).labelsHidden().frame(width: 220)
+                Picker("", selection: $model.detailedList) {
+                    Image(systemName: "list.bullet").tag(false)
+                    Image(systemName: "rectangle.grid.1x2").tag(true)
+                }.pickerStyle(.segmented).labelsHidden().frame(width: 70).help("Compact / Detailed view")
+                Text("\(model.visibleEvents.count) items").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }.padding(.horizontal, 14).padding(.vertical, 10)
             Divider()
             ScrollViewReader { proxy in
                 List(selection: Binding(get: { model.selectedEventID }, set: { model.selectedEventID = $0 })) {
                     ForEach(model.visibleEvents) { event in
-                        HStack(spacing: 10) {
-                            Text(event.clock).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
-                            Text(event.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                            Spacer()
-                            Text("\(event.params.filter { !$0.isInternal }.count) params").font(.caption).foregroundStyle(.tertiary)
-                            Button { copy(event.copyText) } label: { Image(systemName: "doc.on.doc").font(.caption) }
-                                .buttonStyle(.borderless).help("Copy event + all parameters")
+                        Group {
+                            if model.detailedList { card(event) } else { compactRow(event) }
                         }
                         .padding(.vertical, 4)
                         .tag(event.id)
@@ -166,6 +168,54 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    private func compactRow(_ event: LogEvent) -> some View {
+        HStack(spacing: 10) {
+            Text(event.clock).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+            if event.kind == .userProperty { Image(systemName: "person.text.rectangle").font(.caption).foregroundStyle(Theme.accent) }
+            Text(event.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+            Spacer()
+            if event.kind == .userProperty {
+                Text(event.params.first?.value ?? "").font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
+            } else {
+                Text("\(event.params.filter { !$0.isInternal }.count) params").font(.caption).foregroundStyle(.tertiary)
+            }
+            Button { copy(event.copyText) } label: { Image(systemName: "doc.on.doc").font(.caption) }
+                .buttonStyle(.borderless).help("Copy event + all parameters")
+        }
+    }
+
+    /// Detailed view: each event is a card with its parameters shown inline as key/value chips.
+    private func card(_ event: LogEvent) -> some View {
+        let isProp = event.kind == .userProperty
+        let shown = event.params.filter { !$0.isInternal }
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: isProp ? "person.text.rectangle" : "bolt.fill").font(.caption).foregroundStyle(isProp ? Theme.accent : Theme.green)
+                Text(event.name).font(.system(size: 13, weight: .bold)).lineLimit(1)
+                if isProp { Text("USER PROPERTY").font(.system(size: 9, weight: .bold)).padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Theme.accent.opacity(0.2), in: Capsule()) }
+                Spacer()
+                Text(event.clock).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+                Button { copy(event.copyText) } label: { Image(systemName: "doc.on.doc").font(.caption) }
+                    .buttonStyle(.borderless).help("Copy event + all parameters")
+            }
+            if !shown.isEmpty {
+                FlowLayout(spacing: 5) {
+                    ForEach(shown, id: \.self) { p in
+                        HStack(spacing: 4) {
+                            Text(p.key).foregroundStyle(.secondary)
+                            Text(p.value).fontWeight(.semibold).lineLimit(1)
+                        }
+                        .font(.system(size: 11, design: .monospaced))
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 5))
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 4)
     }
 
     private func copy(_ text: String) {
@@ -207,7 +257,7 @@ struct ContentView: View {
             } else {
                 Spacer()
                 Image(systemName: "hand.tap").font(.largeTitle).foregroundStyle(.tertiary).frame(maxWidth: .infinity)
-                Text("Click an event to see its parameters.").font(.callout).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                Text("Click an item to see its parameters.").font(.callout).foregroundStyle(.secondary).frame(maxWidth: .infinity)
                 Spacer()
             }
         }
@@ -227,6 +277,32 @@ struct ContentView: View {
     }
 }
 
+
+/// Wraps children onto new lines when they run out of horizontal space.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        arrange(width: proposal.width ?? 400, subviews: subviews).size
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let r = arrange(width: bounds.width, subviews: subviews)
+        for (i, f) in r.frames.enumerated() {
+            subviews[i].place(at: CGPoint(x: bounds.minX + f.minX, y: bounds.minY + f.minY), proposal: ProposedViewSize(f.size))
+        }
+    }
+    private func arrange(width: CGFloat, subviews: Subviews) -> (size: CGSize, frames: [CGRect]) {
+        var x: CGFloat = 0, y: CGFloat = 0, rowH: CGFloat = 0, maxW: CGFloat = 0
+        var frames: [CGRect] = []
+        for sv in subviews {
+            var sz = sv.sizeThatFits(.unspecified)
+            sz.width = min(sz.width, width)
+            if x > 0 && x + sz.width > width { x = 0; y += rowH + spacing; rowH = 0 }
+            frames.append(CGRect(origin: CGPoint(x: x, y: y), size: sz))
+            x += sz.width + spacing; rowH = max(rowH, sz.height); maxW = max(maxW, x - spacing)
+        }
+        return (CGSize(width: maxW, height: y + rowH), frames)
+    }
+}
 
 /// Makes every scroll view in the window use thin overlay scrollbars.
 struct SlimScrollers: NSViewRepresentable {

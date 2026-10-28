@@ -17,6 +17,8 @@ final class StudioModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var selectedEventID: UUID?
     @Published var autoScroll = true
+    @Published var kindFilter: KindFilter = .all
+    @AppStorage("detailedList") var detailedList = true
     @AppStorage("appearance") var appearance = "light"
     @Published var selectedTags: Set<String> = ["FA", "FA-SVC"]
 
@@ -39,6 +41,7 @@ final class StudioModel: ObservableObject {
     var visibleEvents: [LogEvent] {
         events.filter { event in
             (selectedSerial == nil || event.deviceSerial == selectedSerial) &&
+            kindFilter.allows(event.kind) &&
             Self.matches(event, tokens: searchTokens)
         }
     }
@@ -171,7 +174,7 @@ final class StudioModel: ObservableObject {
             Set($0.params.filter { !$0.isInternal }.map { "\($0.key)=\($0.value)" }) == sig }),
            abs(last.date.timeIntervalSince(date)) < 1 { return }
         let tag = line.contains("FA-SVC") ? "FA-SVC" : "FA"
-        events.append(LogEvent(date: date, deviceSerial: serial, tag: tag, raw: line, name: parsed.name, params: parsed.params))
+        events.append(LogEvent(date: date, deviceSerial: serial, tag: tag, raw: line, name: parsed.name, params: parsed.params, kind: parsed.kind))
         if events.count > 12000 { events.removeFirst(events.count - 12000) }
     }
     private static func parseDate(_ line: String) -> Date? {

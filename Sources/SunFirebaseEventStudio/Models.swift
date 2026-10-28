@@ -18,8 +18,19 @@ struct EventParam: Hashable {
     var isInternal: Bool { key.hasPrefix("ga_") || key.hasPrefix("firebase_event_origin") || key.hasPrefix("firebase_screen") || key.hasPrefix("firebase_previous") }
 }
 
+enum LogKind: String, Hashable { case event, userProperty }
+
+enum KindFilter: String, CaseIterable, Identifiable {
+    case all = "All", events = "Events", properties = "User Props"
+    var id: String { rawValue }
+    func allows(_ k: LogKind) -> Bool {
+        switch self { case .all: return true; case .events: return k == .event; case .properties: return k == .userProperty }
+    }
+}
+
 struct LogEvent: Identifiable, Hashable {
     let id = UUID()
+    let kind: LogKind
     let date: Date
     let deviceSerial: String
     let tag: String
@@ -29,7 +40,8 @@ struct LogEvent: Identifiable, Hashable {
     /// Lowercased "name key=value ..." used by search.
     let blob: String
 
-    init(date: Date, deviceSerial: String, tag: String, raw: String, name: String, params: [EventParam]) {
+    init(date: Date, deviceSerial: String, tag: String, raw: String, name: String, params: [EventParam], kind: LogKind = .event) {
+        self.kind = kind
         self.date = date; self.deviceSerial = deviceSerial; self.tag = tag; self.raw = raw
         self.name = name; self.params = params
         self.blob = ([name] + params.map { "\($0.key)=\($0.value)" }).joined(separator: " ")
@@ -44,11 +56,18 @@ struct LogEvent: Identifiable, Hashable {
 
     /// Plain text with event name and every parameter, for copy/paste into bug reports.
     var copyText: String {
-        ([name] + params.map { "\($0.key) = \($0.value)" }).joined(separator: "\n")
+        if kind == .userProperty { return "\(name) = \(params.first?.value ?? "")" }
+        return ([name] + params.map { "\($0.key) = \($0.value)" }).joined(separator: "\n")
     }
 
     /// Returns nil for log lines that are not an event (noise from FA / FA-SVC).
-    static func parse(raw: String) -> (name: String, params: [EventParam])? {
+    static func parse(raw: String) -> (name: String, params: [EventParam], kind: LogKind)? {
+        // "Setting user property (FE): level, 12" / "Setting user property: level, 12"
+        if let re = try? NSRegularExpression(pattern: #"(?:Setting|Making) user property(?: \(FE\))?: ([A-Za-z0-9_]+), ?(.*)$"#),
+           let mt = re.firstMatch(in: raw, range: NSRange(raw.startIndex..., in: raw)),
+           let r1 = Range(mt.range(at: 1), in: raw), let r2 = Range(mt.range(at: 2), in: raw) {
+            return (String(raw[r1]), [EventParam(key: "value", value: String(raw[r2]))], .userProperty)
+        }
         let patterns = [
             #"Logging event(?: \(FE\))?: origin=[^,]*,name=([A-Za-z0-9_]+)(?:\([^)]*\))?,\s*params=(.*)$"#,
             #"Logging event(?: \(FE\))?: ([A-Za-z0-9_]+)(?:\([^)]*\))?, (.*)$"#,
@@ -58,7 +77,7 @@ struct LogEvent: Identifiable, Hashable {
             guard let re = try? NSRegularExpression(pattern: p),
                   let mt = re.firstMatch(in: raw, range: NSRange(raw.startIndex..., in: raw)),
                   let r1 = Range(mt.range(at: 1), in: raw), let r2 = Range(mt.range(at: 2), in: raw) else { continue }
-            return (String(raw[r1]), parseParams(String(raw[r2])))
+            return (String(raw[r1]), parseParams(String(raw[r2])), .event)
         }
         return nil
     }

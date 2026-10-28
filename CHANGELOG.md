@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.0 — 2026-10-28
+- Ghi nhận cả **User Properties** (`Setting user property: name, value`), hiển thị cùng danh sách, có tab lọc All / Events / User Props.
+- Thêm chế độ xem **Detailed** (mặc định): mỗi event là một thẻ, tham số hiện ngay dạng chip key/value; chuyển qua lại với chế độ Compact bằng nút ở đầu danh sách (ghi nhớ lựa chọn).
+
 ## 0.4.0 — 2026-10-27
 - Thêm "Check for Updates…" (menu ⋯ và menu app): đọc latest.json, báo khi có bản mới và mở link tải. Tự kiểm tra âm thầm khi mở app (chỉ báo khi có bản mới).
 - Hiển thị số version cạnh tên app.
