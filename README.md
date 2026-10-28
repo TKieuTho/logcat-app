@@ -1,4 +1,4 @@
-# Sun Firebase Event Studio (macOS)
+# Logcat — Sun Firebase Event Studio (macOS)
 
 A native SwiftUI macOS app starter for Sun Studio QA. Targets macOS 13+ and Apple Silicon M2/M4.
 
@@ -12,6 +12,19 @@ A native SwiftUI macOS app starter for Sun Studio QA. Targets macOS 13+ and Appl
 - Search/filter, inspect/copy raw event, copy visible logs, export visible logs.
 - **Clear View only** removes rows from this app's display. A separate destructive menu action is required to clear the Android device's log buffer.
 - Does not fabricate sample device events. Firebase DebugView remains the official source of truth.
+
+## Cài bản tải về (.zip) và xử lý khi macOS chặn
+App chưa được Apple ký/notarize, nên lần đầu mở macOS có thể báo **"Logcat can't be opened"** hoặc **"Logcat is damaged"**. Đây là Gatekeeper, không phải lỗi app.
+
+1. Giải nén zip, kéo **Logcat.app** vào **Applications** (khi cập nhật chọn Replace).
+2. Mở Terminal, chạy lệnh sau để bỏ cờ quarantine rồi mở lại app:
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/Logcat.app
+   ```
+   Nếu để app ở `~/Applications` thì đổi đường dẫn tương ứng.
+3. Hoặc không dùng Terminal: bấm chuột phải vào Logcat.app → **Open** → **Open**; hoặc vào **System Settings → Privacy & Security**, kéo xuống bấm **Open Anyway**.
+
+Chỉ cần làm một lần cho mỗi bản tải mới. Build bằng `Build and Install.command` thì không bị chặn vì script đã tự gỡ quarantine.
 
 ## Build and install without typing Terminal commands
 1. On a Mac, unzip this folder.
@@ -27,10 +40,3 @@ This source project has not been compiled or hardware-tested in this environment
 - This starter is unsigned and not notarized. Gatekeeper may require approval. A distributable DMG requires signing/notarization with the developer's Apple credentials.
 - ADB's `setprop` changes are made only after the user confirms. Restarting the game requires a second confirmation.
 - `Clear View` does not invoke `adb logcat -c`.
-
-## Included package IDs
-- Mahjong Classic — `studio.sun.mahjong.classic.casual.tile.matching`
-- Tile Adventure — `studio.sun.tileadventure`
-- Snake Escape — `studio.sun.snake.escape.puzzle`
-- Blossom Master — `com.blossom.tile.match.puzzle`
-- Solitaire Classic — `studio.sun.solitaire.classic.card.klondike.patience`
