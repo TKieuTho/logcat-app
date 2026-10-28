@@ -1,6 +1,6 @@
 {
-  "version": "0.5.0",
+  "version": "0.5.1",
   "date": "2026-10-28",
-  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.5.0/Logcat-0.5.0-macOS-arm64.zip",
-  "notes": "Ghi nhận User Properties, thêm chế độ xem Detailed (thẻ + tham số), hướng dẫn khi macOS chặn app."
+  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.5.1/Logcat-0.5.1-macOS-arm64.zip",
+  "notes": "Cập nhật ngay trong app; log đủ event kèm giờ gửi, sửa lỗi mất/nuốt event."
 }
