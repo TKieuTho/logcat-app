@@ -26,6 +26,8 @@ final class StudioModel: ObservableObject {
     @Published var showUpdateAlert = false
     @Published var updateMessage: String?
     @Published var isInstallingUpdate = false
+    @Published var skippedLines = 0
+    var lastSkippedLine = ""
 
     private let adb = ADBService()
     private var streamProcesses: [String: Process] = [:]
@@ -181,17 +183,30 @@ final class StudioModel: ObservableObject {
         do { try visibleEvents.map(\.copyText).joined(separator: "\n\n").write(to: url, atomically: true, encoding: .utf8) }
         catch { errorMessage = error.localizedDescription }
     }
+    /// Which log flavour a line came from; the same event is logged once per flavour, never twice within one.
+    private static func sourceKey(_ line: String) -> String {
+        line.contains("Event recorded") ? "recorded" : line.contains("(FE)") ? "fe" : "plain"
+    }
     private func ingest(_ line: String, serial: String) {
-        guard let parsed = LogEvent.parse(raw: line) else { return }
+        guard let parsed = LogEvent.parse(raw: line) else {
+            let l = line.lowercased()
+            if l.contains("logging event") || l.contains("user property") || l.contains("event recorded") {
+                skippedLines += 1
+                lastSkippedLine = line
+            }
+            return
+        }
         let date = Self.parseDate(line) ?? Date()
-        // FA logs the same event several times (Logging event + Event recorded); keep one.
+        // FA logs one event in several flavours (Logging event / Event recorded); drop only those cross-flavour copies.
+        // Identical repeats in the same flavour are genuine separate sends and are kept.
+        let key = Self.sourceKey(line)
         let sig = Set(parsed.params.filter { !$0.isInternal }.map { "\($0.key)=\($0.value)" })
-        if let last = events.suffix(15).last(where: { $0.deviceSerial == serial && $0.name == parsed.name &&
-            Set($0.params.filter { !$0.isInternal }.map { "\($0.key)=\($0.value)" }) == sig }),
-           abs(last.date.timeIntervalSince(date)) < 1 { return }
+        if events.suffix(40).contains(where: { $0.deviceSerial == serial && $0.kind == parsed.kind && $0.name == parsed.name &&
+            Self.sourceKey($0.raw) != key && abs($0.date.timeIntervalSince(date)) < 1 &&
+            Set($0.params.filter { !$0.isInternal }.map { "\($0.key)=\($0.value)" }) == sig }) { return }
         let tag = line.contains("FA-SVC") ? "FA-SVC" : "FA"
         events.append(LogEvent(date: date, deviceSerial: serial, tag: tag, raw: line, name: parsed.name, params: parsed.params, kind: parsed.kind))
-        if events.count > 12000 { events.removeFirst(events.count - 12000) }
+        if events.count > 50000 { events.removeFirst(events.count - 50000) }
     }
     private static func parseDate(_ line: String) -> Date? {
         // logcat -v time: MM-DD HH:mm:ss.SSS

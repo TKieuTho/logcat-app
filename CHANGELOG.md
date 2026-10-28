@@ -2,6 +2,12 @@
 
 ## 0.5.1 — 2026-10-28
 - Cập nhật ngay trong app: khi có bản mới, bấm "Cập nhật ngay" để app tự tải, thay bản mới và mở lại (không cần kéo thả thủ công). Nếu không ghi được vào thư mục cài app thì mở trang tải về.
+- Log đủ event, kèm giờ gửi (HH:mm:ss.SSS lấy từ logcat):
+  - Fix: dòng log bị cắt đôi giữa hai lần đọc làm mất event.
+  - Fix: chỉ gộp bản sao cùng event giữa các kiểu log (Logging event / Event recorded); event gửi lặp liên tiếp giống hệt nhau giờ được giữ lại, không bị nuốt.
+  - Fix: param của dòng "Event recorded" bị dính `}]`.
+  - Cảnh báo ở thanh dưới khi có dòng log event/property mà app chưa đọc được (rê chuột để xem dòng đó).
+  - Tăng giới hạn lưu từ 12.000 lên 50.000 dòng.
 
 ## 0.5.0 — 2026-10-28
 - Ghi nhận cả **User Properties** (`Setting user property: name, value`), hiển thị cùng danh sách, có tab lọc All / Events / User Props.

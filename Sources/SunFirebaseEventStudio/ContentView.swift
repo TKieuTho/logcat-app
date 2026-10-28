@@ -269,6 +269,10 @@ struct ContentView: View {
             Image(systemName: "info.circle")
             Text(model.statusText).lineLimit(1)
             Spacer()
+            if model.skippedLines > 0 {
+                Label("\(model.skippedLines) dòng log chưa đọc được", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange).help(model.lastSkippedLine)
+            }
             Text("Clear View never clears device logs").foregroundStyle(.secondary)
         }
         .font(.caption)

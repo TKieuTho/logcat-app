@@ -85,7 +85,9 @@ struct LogEvent: Identifiable, Hashable {
     private static func parseParams(_ s: String) -> [EventParam] {
         var body = s
         if let open = body.firstIndex(of: "{") { body = String(body[body.index(after: open)...]) }
-        if let close = body.lastIndex(of: "}") { body = String(body[..<close]) }
+        // "Event recorded" ends with "}]}" (Bundle + Event), the other flavours with "}]" or "}".
+        if let suffix = ["}]}", "}]", "}"].first(where: { body.hasSuffix($0) }) { body.removeLast(suffix.count) }
+        else if let close = body.lastIndex(of: "}") { body = String(body[..<close]) }
         guard let keyRE = try? NSRegularExpression(pattern: #"(?:^|, )([A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?)="#) else { return [] }
         let ns = body as NSString
         let matches = keyRE.matches(in: body, range: NSRange(location: 0, length: ns.length))

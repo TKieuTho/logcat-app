@@ -131,13 +131,37 @@ final class ADBService: ObservableObject {
         p.arguments = ["-s", serial, "logcat", "-v", "time", "-s", "FA", "FA-SVC"]
         p.standardOutput = pipe
         p.standardError = pipe
+        // A read can end mid-line; keep the tail until its newline arrives so no event is split or lost.
+        let pending = LineBuffer()
         pipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            if data.isEmpty { return }
-            let chunk = String(data: data, encoding: .utf8) ?? ""
-            chunk.split(whereSeparator: \.isNewline).forEach { onLine(String($0)) }
+            if data.isEmpty { handle.readabilityHandler = nil; pending.flush().forEach(onLine); return }
+            pending.append(data).forEach(onLine)
         }
         try p.run()
         return p
+    }
+}
+
+final class LineBuffer: @unchecked Sendable {
+    private var tail = Data()
+    private let lock = NSLock()
+
+    func append(_ data: Data) -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        tail.append(data)
+        var lines: [String] = []
+        while let nl = tail.firstIndex(of: 0x0A) {
+            let line = tail[tail.startIndex..<nl]
+            tail.removeSubrange(tail.startIndex...nl)
+            if let s = String(data: line, encoding: .utf8)?.trimmingCharacters(in: .newlines), !s.isEmpty { lines.append(s) }
+        }
+        return lines
+    }
+    func flush() -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        defer { tail.removeAll() }
+        guard let s = String(data: tail, encoding: .utf8)?.trimmingCharacters(in: .newlines), !s.isEmpty else { return [] }
+        return [s]
     }
 }
