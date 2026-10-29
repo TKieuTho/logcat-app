@@ -123,12 +123,19 @@ final class ADBService: ObservableObject {
         _ = try await run(["-s", serial, "logcat", "-c"])
     }
 
+    static let markerTag = "LOGCATAPP"
+
+    /// Writes a marker line into the device log; the app ignores everything before it so only post-Start events show.
+    func sendStartMarker(serial: String, token: String) async throws {
+        _ = try await run(["-s", serial, "shell", "log", "-t", Self.markerTag, "-p", "i", token])
+    }
+
     func startLogcat(serial: String, onLine: @escaping @Sendable (String) -> Void) throws -> Process {
         guard let adbPath else { throw NSError(domain: "ADB", code: 1, userInfo: [NSLocalizedDescriptionKey: "ADB is not ready yet."]) }
         let p = Process()
         let pipe = Pipe()
         p.executableURL = adbPath
-        p.arguments = ["-s", serial, "logcat", "-v", "time", "-s", "FA", "FA-SVC"]
+        p.arguments = ["-s", serial, "logcat", "-v", "time", "-s", "FA", "FA-SVC", "\(Self.markerTag):I"]
         p.standardOutput = pipe
         p.standardError = pipe
         // A read can end mid-line; keep the tail until its newline arrives so no event is split or lost.

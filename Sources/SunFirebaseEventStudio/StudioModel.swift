@@ -32,6 +32,8 @@ final class StudioModel: ObservableObject {
     private let adb = ADBService()
     private var streamProcesses: [String: Process] = [:]
     private var streamingSerials = Set<String>()
+    /// Per serial: marker token sent at Start; nil once the marker came back and live events may flow.
+    private var pendingMarkers: [String: String] = [:]
     private var serviceObservation: Any?
 
     init() {
@@ -98,8 +100,8 @@ final class StudioModel: ObservableObject {
         Task {
             do {
                 try await adb.configureFirebase(serial: serial, package: selectedGame)
-                statusText = "Firebase debug properties configured on \(serial)"
-                showLaunchConfirmation = true
+                startStream(for: serial)
+                statusText = "Đang ghi log từ bây giờ. Nếu event chưa hiện, mở lại game (Menu ⋯ → Restart Game…) để bật debug mode."
             } catch { errorMessage = error.localizedDescription }
         }
     }
@@ -127,8 +129,16 @@ final class StudioModel: ObservableObject {
             let p = try adb.startLogcat(serial: serial) { [weak self] line in
                 Task { @MainActor in self?.ingest(line, serial: serial) }
             }
+            let token = "START_\(UUID().uuidString)"
+            pendingMarkers[serial] = token
             streamProcesses[serial] = p
             streamingSerials.insert(serial)
+            Task {
+                do { try await adb.sendStartMarker(serial: serial, token: token) }
+                catch { pendingMarkers[serial] = nil }
+                try? await Task.sleep(for: .seconds(8))
+                if pendingMarkers[serial] == token { pendingMarkers[serial] = nil }
+            }
             isStreaming = !streamingSerials.isEmpty
             statusText = "Streaming FA / FA-SVC from \(streamingSerials.count) device(s)"
         } catch { errorMessage = error.localizedDescription }
@@ -143,6 +153,7 @@ final class StudioModel: ObservableObject {
             streamProcesses.removeValue(forKey: serial)
         }
         streamingSerials.remove(serial)
+        pendingMarkers[serial] = nil
         isStreaming = !streamingSerials.isEmpty
         statusText = isStreaming ? "Streaming FA / FA-SVC from \(streamingSerials.count) device(s)" : "Not streaming"
     }
@@ -188,6 +199,11 @@ final class StudioModel: ObservableObject {
         line.contains("Event recorded") ? "recorded" : line.contains("(FE)") ? "fe" : "plain"
     }
     private func ingest(_ line: String, serial: String) {
+        if let token = pendingMarkers[serial] {
+            if line.contains(token) { pendingMarkers[serial] = nil }
+            return
+        }
+        if line.contains(ADBService.markerTag) { return }
         guard let parsed = LogEvent.parse(raw: line) else {
             let l = line.lowercased()
             if l.contains("logging event") || l.contains("user property") || l.contains("event recorded") {

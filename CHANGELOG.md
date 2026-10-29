@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.2 — 2026-10-29
+- Hiển thị log **từ lúc bấm nút bắt đầu** (Configure & Capture / Stream All Devices); log cũ trong bộ nhớ máy không hiện nữa. Cách làm: ghi một dòng mốc vào log thiết bị rồi bỏ qua mọi thứ trước mốc, không phụ thuộc đồng hồ máy.
+- **Không tự force-stop / mở lại game nữa.** Configure & Capture chỉ bật thuộc tính debug rồi bắt đầu ghi. Cần khởi động lại game (debug mode chỉ nhận khi game khởi động) thì dùng menu ⋯ → Restart Game….
+
 ## 0.5.1 — 2026-10-28
 - Cập nhật ngay trong app: khi có bản mới, bấm "Cập nhật ngay" để app tự tải, thay bản mới và mở lại (không cần kéo thả thủ công). Nếu không ghi được vào thư mục cài app thì mở trang tải về.
 - Log đủ event, kèm giờ gửi (HH:mm:ss.SSS lấy từ logcat):

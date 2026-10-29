@@ -28,10 +28,10 @@ struct ContentView: View {
             Button("Cancel", role: .cancel) {}
             Button("Configure Device") { model.confirmSetup() }
         } message: {
-            Text("This changes Android debug properties on \(model.selectedSerial ?? "the selected device") for \(model.selectedGame.title). After setup, the app will ask before force-stopping and relaunching the game. Firebase DebugView remains the official source of truth.")
+            Text("Thay đổi thuộc tính debug Firebase trên \(model.selectedSerial ?? "thiết bị đã chọn") cho \(model.selectedGame.title), rồi bắt đầu hiển thị log từ lúc bấm (log cũ trong máy không hiện). App không tự đóng hay mở lại game. Debug mode chỉ có hiệu lực khi game khởi động; nếu game đang chạy mà event chưa hiện thì dùng Menu ⋯ → Restart Game….")
         }
         .alert("Restart game to begin capture?", isPresented: $model.showLaunchConfirmation) {
-            Button("Not now", role: .cancel) { model.startStream() }
+            Button("Hủy", role: .cancel) {}
             Button("Restart & Stream") { model.confirmLaunch() }
         } message: {
             Text("The app will force-stop and relaunch \(model.selectedGame.title) on \(model.selectedSerial ?? "the selected device") and start its FA / FA-SVC log stream.")
@@ -109,6 +109,9 @@ struct ContentView: View {
                     Label(model.isStreaming ? "Stop All" : "Stream All Devices", systemImage: model.isStreaming ? "stop.fill" : "play.fill")
                 }.disabled(!model.isStreaming && !model.devices.contains(where: { $0.state == "device" }))
                 Menu {
+                    Button("Restart Game…", systemImage: "arrow.clockwise") { model.showLaunchConfirmation = true }
+                        .disabled(model.selectedSerial == nil || model.selectedDevice?.state != "device")
+                    Divider()
                     Button("Clear View Only", systemImage: "eraser") { model.clearVisibleEvents() }
                     Button("Clear Device Log Buffer…", systemImage: "trash", role: .destructive) { showDeviceBufferWarning = true }
                     Divider()
