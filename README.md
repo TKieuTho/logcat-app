@@ -10,7 +10,10 @@ App macOS (SwiftUI, macOS 13+, Apple Silicon) giúp QA xem **event** và **user 
 - Hai chế độ xem (nút ở đầu danh sách, ghi nhớ lựa chọn): **Detailed** (mỗi event là một thẻ, tham số hiện ngay dạng chip key/value) và **Compact** (mỗi event một dòng). Tab lọc **All / Events / User Props**.
 - Mỗi event có giờ gửi `HH:mm:ss.SSS` (lấy từ logcat). Bấm vào event để xem bảng tham số và log gốc ("Raw log").
 - Search nhiều từ (AND) trên tên event, tên param, giá trị param. Copy từng event, copy / export các event đang hiển thị.
-- Giao diện Hệ thống / Sáng / Tối.
+- **Notification Schedule…** (menu ⋯): lịch thông báo local game đã hẹn trên máy (giờ nổ, đếm ngược, kiểu hẹn, chu kỳ lặp), đọc từ AlarmManager (`dumpsys alarm`). Chỉ xem được lịch, không xem được tiêu đề/nội dung thông báo.
+- **Mirror Screen**: chiếu màn hình điện thoại lên Mac bằng [scrcpy](https://github.com/Genymobile/scrcpy). Chưa có scrcpy thì app hỏi cài tự động qua Homebrew (hoặc mở hướng dẫn nếu chưa có Homebrew).
+- **Chụp / Quay màn hình**: lưu PNG / MP4 (tối đa 3 phút mỗi lần, không có tiếng) và copy vào clipboard để dán (⌘V). Mặc định lưu vào Downloads; đổi ở menu ⋯ → "Thư mục lưu ảnh/video".
+- Giao diện tự co theo cỡ cửa sổ (nút thành icon, chi tiết xuống dưới danh sách khi cửa sổ hẹp). Chế độ Hệ thống / Sáng / Tối.
 - **Cập nhật ngay trong app:** menu ⋯ → Check for Updates…, có bản mới thì bấm "Cập nhật ngay", app tự tải, thay bản mới và mở lại.
 
 ## Dùng
@@ -44,6 +47,8 @@ Chỉ cần làm một lần cho mỗi bản tải mới. Build bằng `Build an
 - Giờ hiển thị là giờ SDK ghi log trên máy, không phải giờ server nhận.
 - Nếu có dòng log event/property mà app chưa đọc được, thanh dưới cùng hiện cảnh báo màu cam (rê chuột để xem dòng đó).
 - Chỉ giữ 50.000 dòng gần nhất trong bộ nhớ.
+- Quay màn hình dùng `adb screenrecord` nên không có tiếng; một số app (thanh toán, ngân hàng) chặn chụp/quay.
+- Mirror Screen cần scrcpy (không đóng gói kèm app).
 - Danh sách chọn bằng chuột, chưa hỗ trợ phím mũi tên. Chưa có chế độ nhiều khung song song cho từng thiết bị.
 - App chưa ký/notarize (xem phần Gatekeeper ở trên). Bản build chỉ chạy trên Apple Silicon; Mac Intel tự build từ source.
 - Mới thử trên một số thiết bị Android; nên kiểm tra thực tế trước khi dùng cho báo cáo chính thức.

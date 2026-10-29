@@ -120,3 +120,92 @@ enum GamePackage: String, CaseIterable, Identifiable {
         }
     }
 }
+
+/// One pending AlarmManager entry of the game; Unity local notifications are scheduled this way.
+struct ScheduledAlarm: Identifiable, Hashable {
+    let id = UUID()
+    let fireDate: Date
+    let type: String
+    let exact: Bool
+    let window: String
+    let repeatInterval: TimeInterval
+    let tag: String
+
+    var isNotification: Bool { tag.contains("androidnotifications") || tag.lowercased().contains("notif") }
+    var modeText: String { exact ? "Chính xác" : "Trong khoảng \(Self.tidy(window))" }
+    var repeatText: String {
+        guard repeatInterval > 0 else { return "Một lần" }
+        return "Lặp mỗi \(Self.duration(repeatInterval))"
+    }
+    var copyText: String { "\(Self.fullFormatter.string(from: fireDate))  \(type)  \(modeText)  \(repeatText)  \(tag)" }
+
+    static let fullFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "EEE dd/MM HH:mm:ss"; return f
+    }()
+    /// "+1h0m0s0ms" → "1h"
+    static func tidy(_ w: String) -> String {
+        let t = w.replacingOccurrences(of: "+", with: "")
+            .replacingOccurrences(of: #"(?<![0-9])0(ms|d|h|m|s)"#, with: "", options: .regularExpression)
+        return t.isEmpty ? "0" : t
+    }
+    static func duration(_ s: TimeInterval) -> String {
+        let t = Int(abs(s)); let d = t / 86400, h = t % 86400 / 3600, m = t % 3600 / 60, sec = t % 60
+        if d > 0 { return "\(d)d \(h)h" }
+        if h > 0 { return "\(h)h \(m)m" }
+        if m > 0 { return "\(m)m \(sec)s" }
+        return "\(sec)s"
+    }
+}
+
+enum AlarmParser {
+    /// Parses `adb shell dumpsys alarm` and keeps the pending alarms owned by `package`.
+    static func parse(dump: String, package: String, now: Date = Date()) -> [ScheduledAlarm] {
+        guard let header = try? NSRegularExpression(pattern: #"^\s+([A-Z_]+) #\d+: Alarm\{\S+ type (\d+) origWhen (\d+) whenElapsed \d+ (\S+)\}"#) else { return [] }
+        let lines = dump.components(separatedBy: "\n")
+        var out: [ScheduledAlarm] = []
+        var i = 0
+        while i < lines.count {
+            let line = lines[i]
+            guard let m = header.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+                  let pkg = Range(m.range(at: 4), in: line), line[pkg] == package,
+                  let kind = Range(m.range(at: 1), in: line), let orig = Range(m.range(at: 3), in: line) else { i += 1; continue }
+            var tag = "", window = "0", repeatMs = 0.0, relative: TimeInterval?
+            var j = i + 1
+            while j < lines.count, !(header.firstMatch(in: lines[j], range: NSRange(lines[j].startIndex..., in: lines[j])) != nil),
+                  lines[j].hasPrefix("      ") {
+                let l = lines[j].trimmingCharacters(in: .whitespaces)
+                if l.hasPrefix("tag=") { tag = String(l.dropFirst(4)).trimmingCharacters(in: .whitespaces) }
+                if let r = l.range(of: "window=") { window = String(l[r.upperBound...].prefix { !$0.isWhitespace }) }
+                if let r = l.range(of: "repeatInterval=") { repeatMs = Double(l[r.upperBound...].prefix { $0.isNumber }) ?? 0 }
+                if l.hasPrefix("whenElapsed=") { relative = parseRelative(String(l.dropFirst(12).prefix { !$0.isWhitespace })) }
+                j += 1
+            }
+            let type = String(line[kind])
+            let date: Date
+            if type.hasPrefix("RTC"), let ms = Double(line[orig]) { date = Date(timeIntervalSince1970: ms / 1000) }
+            else if let rel = relative { date = now.addingTimeInterval(rel) }
+            else { i = j; continue }
+            out.append(ScheduledAlarm(fireDate: date, type: type, exact: window == "0", window: window,
+                                      repeatInterval: repeatMs / 1000, tag: tag.replacingOccurrences(of: "*walarm*:", with: "").replacingOccurrences(of: "*alarm*:", with: "")))
+            i = j
+        }
+        return out.sorted { $0.fireDate < $1.fireDate }
+    }
+
+    /// "+1d17h54m19s610ms" / "-3h51m55s257ms" → seconds.
+    static func parseRelative(_ s: String) -> TimeInterval? {
+        guard let first = s.first, first == "+" || first == "-" else { return nil }
+        let sign: Double = first == "-" ? -1 : 1
+        var total = 0.0, num = ""
+        var chars = Array(s.dropFirst())[...]
+        while let c = chars.first {
+            if c.isNumber { num.append(c); chars = chars.dropFirst(); continue }
+            var unit = String(c); chars = chars.dropFirst()
+            if c == "m", chars.first == "s" { unit = "ms"; chars = chars.dropFirst() }
+            let v = Double(num) ?? 0; num = ""
+            switch unit { case "d": total += v * 86400; case "h": total += v * 3600; case "m": total += v * 60
+                          case "s": total += v; case "ms": total += v / 1000; default: break }
+        }
+        return sign * total
+    }
+}

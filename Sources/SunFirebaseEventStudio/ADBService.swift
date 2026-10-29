@@ -71,7 +71,7 @@ final class ADBService: ObservableObject {
         return candidates.compactMap { $0 }.first { fm.isExecutableFile(atPath: $0.path) }
     }
 
-    private func run(_ arguments: [String]) async throws -> String {
+    func run(_ arguments: [String]) async throws -> String {
         guard let adbPath else { throw NSError(domain: "ADB", code: 1, userInfo: [NSLocalizedDescriptionKey: "ADB is not ready yet."]) }
         return try await Task.detached(priority: .userInitiated) {
             let p = Process()
@@ -170,5 +170,58 @@ final class LineBuffer: @unchecked Sendable {
         defer { tail.removeAll() }
         guard let s = String(data: tail, encoding: .utf8)?.trimmingCharacters(in: .newlines), !s.isEmpty else { return [] }
         return [s]
+    }
+}
+
+extension ADBService {
+    /// `exec-out screencap -p` streams a PNG over stdout; written straight to `url`.
+    func screenshot(serial: String, to url: URL) async throws {
+        guard let adbPath else { throw NSError(domain: "ADB", code: 1, userInfo: [NSLocalizedDescriptionKey: "ADB is not ready yet."]) }
+        try await Task.detached {
+            let p = Process()
+            let out = Pipe()
+            p.executableURL = adbPath
+            p.arguments = ["-s", serial, "exec-out", "screencap", "-p"]
+            p.standardOutput = out
+            try p.run()
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
+            guard p.terminationStatus == 0, data.count > 100 else {
+                throw NSError(domain: "ADB", code: 3, userInfo: [NSLocalizedDescriptionKey: "Không chụp được màn hình (máy có thể đang khóa hoặc app chặn chụp)."])
+            }
+            try data.write(to: url)
+        }.value
+    }
+
+    /// Recording runs on the device (Android caps one segment at 3 minutes); `onExit` fires when it ends for any reason.
+    func startRecording(serial: String, remote: String, onExit: @escaping @Sendable (Int32, String) -> Void) throws -> Process {
+        guard let adbPath else { throw NSError(domain: "ADB", code: 1, userInfo: [NSLocalizedDescriptionKey: "ADB is not ready yet."]) }
+        let p = Process()
+        let pipe = Pipe()
+        p.executableURL = adbPath
+        p.arguments = ["-s", serial, "shell", "screenrecord", "--time-limit", "180", remote]
+        p.standardOutput = pipe
+        p.standardError = pipe
+        p.terminationHandler = { proc in
+            let text = String(data: pipe.fileHandleForReading.availableData, encoding: .utf8) ?? ""
+            onExit(proc.terminationStatus, text)
+        }
+        try p.run()
+        return p
+    }
+
+    /// SIGINT lets screenrecord finalize the mp4; killing the adb client instead would leave a broken file.
+    func stopRecording(serial: String) async {
+        _ = try? await run(["-s", serial, "shell", "kill -2 $(pidof screenrecord)"])
+    }
+
+    func pullAndRemove(serial: String, remote: String, to url: URL) async throws {
+        _ = try await run(["-s", serial, "pull", remote, url.path])
+        _ = try? await run(["-s", serial, "shell", "rm", remote])
+    }
+
+    func fetchAlarms(serial: String, package: String) async throws -> [ScheduledAlarm] {
+        let dump = try await run(["-s", serial, "shell", "dumpsys", "alarm"])
+        return await Task.detached { AlarmParser.parse(dump: dump, package: package) }.value
     }
 }

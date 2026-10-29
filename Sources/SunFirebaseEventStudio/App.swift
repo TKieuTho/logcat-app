@@ -9,7 +9,7 @@ struct SunFirebaseEventStudioApp: App {
             ContentView()
                 .environmentObject(model)
                 .tint(Theme.accent)
-                .frame(minWidth: 1120, minHeight: 720)
+                .frame(minWidth: 520, minHeight: 460)
         }
         .windowStyle(.titleBar)
         .commands {

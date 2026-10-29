@@ -14,10 +14,21 @@ struct ContentView: View {
             Divider()
             controls
             Divider()
-            HStack(spacing: 0) {
-                eventList.frame(minWidth: 600, maxWidth: .infinity)
-                Divider()
-                detailPanel.frame(width: 420)
+            // Wide window: list and details side by side. Narrow: details drop below the list.
+            GeometryReader { geo in
+                if geo.size.width >= 940 {
+                    HStack(spacing: 0) {
+                        eventList.frame(minWidth: 480, maxWidth: .infinity)
+                        Divider()
+                        detailPanel.frame(width: min(420, max(340, geo.size.width * 0.36)))
+                    }
+                } else {
+                    VStack(spacing: 0) {
+                        eventList.frame(maxHeight: .infinity)
+                        Divider()
+                        detailPanel.frame(height: min(280, max(180, geo.size.height * 0.4)))
+                    }
+                }
             }
             footer
         }
@@ -49,6 +60,19 @@ struct ContentView: View {
         .alert("Logcat", isPresented: Binding(get: { model.updateMessage != nil }, set: { if !$0 { model.updateMessage = nil } })) {
             Button("OK") { model.updateMessage = nil }
         } message: { Text(model.updateMessage ?? "") }
+        .alert("Cần scrcpy để chiếu màn hình", isPresented: $model.showScrcpyMissing) {
+            if model.canInstallScrcpyWithBrew {
+                Button("Cài tự động (Homebrew)") { model.installScrcpyAndMirror() }
+            } else {
+                Button("Mở hướng dẫn cài đặt") { model.openScrcpyInstallGuide() }
+            }
+            Button("Hủy", role: .cancel) {}
+        } message: {
+            Text(model.canInstallScrcpyWithBrew
+                 ? "Máy chưa có scrcpy (công cụ mã nguồn mở dùng để chiếu màn hình Android). App sẽ chạy \"brew install scrcpy\", mất vài phút."
+                 : "Máy chưa có scrcpy và cũng chưa có Homebrew. Cài Homebrew (brew.sh) rồi chạy: brew install scrcpy. Bấm nút bên dưới để mở hướng dẫn.")
+        }
+        .sheet(isPresented: $model.showNotificationSchedule) { NotificationScheduleView().environmentObject(model) }
         .onAppear { model.checkForUpdates(manual: false) }
         .alert("Logcat", isPresented: Binding(
             get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } }
@@ -58,6 +82,13 @@ struct ContentView: View {
     }
 
     private var header: some View {
+        ViewThatFits(in: .horizontal) {
+            headerContent(wide: true)
+            headerContent(wide: false)
+        }
+    }
+
+    private func headerContent(wide: Bool) -> some View {
         HStack(spacing: 12) {
             Group {
                 if let img = Bundle.main.image(forResource: "cat") ?? NSImage(contentsOfFile: "Resources/cat.png") {
@@ -66,75 +97,175 @@ struct ContentView: View {
             }.frame(width: 44, height: 40)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Logcat").font(.title2.bold()) + Text("  v\(Updater.currentVersion)").font(.caption).foregroundColor(.secondary)
-                Text("Sun Studio · Firebase events (FA / FA-SVC)").font(.caption).foregroundStyle(.secondary)
+                if wide { Text("Sun Studio · Firebase events (FA / FA-SVC)").font(.caption).foregroundStyle(.secondary) }
             }
-            Spacer()
+            Spacer(minLength: 0)
             Picker("", selection: $appearance) {
                 Image(systemName: "circle.lefthalf.filled").tag("system")
                 Image(systemName: "sun.max").tag("light")
                 Image(systemName: "moon").tag("dark")
             }.pickerStyle(.segmented).frame(width: 110).labelsHidden().help("Appearance: System / Light / Dark")
             Circle().fill(model.isStreaming ? Theme.green : .gray).frame(width: 8, height: 8)
-            Text(model.isStreaming ? "LIVE" : "NOT STREAMING").font(.caption.bold()).foregroundStyle(.secondary)
+            if wide { Text(model.isStreaming ? "LIVE" : "NOT STREAMING").font(.caption.bold()).foregroundStyle(.secondary) }
         }
-        .padding(16)
+        .padding(wide ? 16 : 10)
     }
 
+    private var deviceReady: Bool { model.selectedSerial != nil && model.selectedDevice?.state == "device" }
+
+    /// Picks the roomiest layout that fits the current window width.
     private var controls: some View {
+        ViewThatFits(in: .horizontal) {
+            fullBar.padding(14)
+            mediumBar.padding(10)
+            narrowBar.padding(10)
+        }
+    }
+
+    private func devicePicker(compact: Bool) -> some View {
+        Picker("Device", selection: Binding(get: { model.selectedSerial ?? "" }, set: { model.selectDevice($0.isEmpty ? nil : $0) })) {
+            Text("Select device…").tag("")
+            ForEach(model.devices) { device in
+                Text((compact ? device.model.replacingOccurrences(of: "_", with: " ") : device.displayName) + (device.state == "unauthorized" ? " · UNAUTHORIZED" : "")).tag(device.serial)
+            }
+        }.labelsHidden().fixedSize().frame(minWidth: compact ? 150 : 290, alignment: .leading)
+    }
+    private func gamePicker(compact: Bool) -> some View {
+        Picker("Game", selection: $model.selectedGame) {
+            ForEach(GamePackage.allCases) { game in Text(game.title).tag(game) }
+        }.labelsHidden().fixedSize().frame(minWidth: compact ? 140 : 190, alignment: .leading)
+    }
+
+    private var streamLabelIcon: String { model.isStreaming ? "stop.fill" : "play.fill" }
+    private var canStream: Bool { model.isStreaming || model.devices.contains(where: { $0.state == "device" }) }
+
+    private var moreMenu: some View {
+        Menu {
+            Button(model.isInstallingScrcpy ? "Đang cài scrcpy…" : model.isMirroringSelected ? "Stop Mirroring" : "Mirror Screen", systemImage: "iphone.gen3") { model.toggleMirror() }
+                .disabled(!deviceReady || model.isInstallingScrcpy)
+            Button("Notification Schedule…", systemImage: "bell.badge") { model.openNotificationSchedule() }
+                .disabled(!deviceReady)
+            Button("Restart Game…", systemImage: "arrow.clockwise") { model.showLaunchConfirmation = true }
+                .disabled(!deviceReady)
+            Divider()
+            Button("Thư mục lưu ảnh/video: \(model.captureDirectoryName)…", systemImage: "folder") { model.chooseCaptureDirectory() }
+            if model.usesCustomCaptureDirectory {
+                Button("Dùng lại thư mục Downloads", systemImage: "arrow.uturn.backward") { model.resetCaptureDirectory() }
+            }
+            Divider()
+            Button("Clear View Only", systemImage: "eraser") { model.clearVisibleEvents() }
+            Button("Clear Device Log Buffer…", systemImage: "trash", role: .destructive) { showDeviceBufferWarning = true }
+            Divider()
+            Button("Copy Visible Logs", systemImage: "doc.on.doc") { model.copyVisibleEvents() }
+            Button("Export Visible Logs…", systemImage: "square.and.arrow.up") { model.exportVisibleEvents() }
+            Divider()
+            Button("Check for Updates…", systemImage: "arrow.triangle.2.circlepath") { model.checkForUpdates(manual: true) }
+        } label: { Image(systemName: "ellipsis.circle").font(.title3) }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().frame(height: 26)
+    }
+
+    private func searchBar(compact: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField(compact ? "Search" : "Search: event name, parameter or value (e.g. shop level 3)", text: $model.searchText)
+                .textFieldStyle(.plain)
+            if !model.searchText.isEmpty {
+                Text("\(model.visibleEvents.count) found").font(.caption).foregroundStyle(.secondary)
+                Button { model.searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.borderless).foregroundStyle(.secondary)
+            }
+            Divider().frame(height: 18)
+            Toggle("Auto-scroll", isOn: $model.autoScroll).toggleStyle(.checkbox).font(.caption)
+        }
+        .padding(compact ? 6 : 9).background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var fullBar: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .bottom, spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("ANDROID DEVICE").font(.caption2.bold()).foregroundStyle(.secondary)
-                    Picker("Device", selection: Binding(get: { model.selectedSerial ?? "" }, set: { model.selectDevice($0.isEmpty ? nil : $0) })) {
-                        Text("Select device…").tag("")
-                        ForEach(model.devices) { device in
-                            Text(device.displayName + (device.state == "unauthorized" ? " · UNAUTHORIZED" : "")).tag(device.serial)
-                        }
-                    }.frame(minWidth: 290)
+                    devicePicker(compact: false)
                 }
                 VStack(alignment: .leading, spacing: 5) {
                     Text("GAME PACKAGE").font(.caption2.bold()).foregroundStyle(.secondary)
-                    Picker("Game", selection: $model.selectedGame) {
-                        ForEach(GamePackage.allCases) { game in Text(game.title).tag(game) }
-                    }.frame(minWidth: 190)
+                    gamePicker(compact: false)
                 }
                 Button { model.requestSetup() } label: {
                     Label("Configure & Capture", systemImage: "bolt.fill")
                 }
                 .buttonStyle(.borderedProminent).tint(Theme.accent)
-                .disabled(model.selectedSerial == nil || model.selectedDevice?.state != "device")
+                .disabled(!deviceReady)
                 Button { model.isStreaming ? model.stopAllStreams() : model.startAllStreams() } label: {
-                    Label(model.isStreaming ? "Stop All" : "Stream All Devices", systemImage: model.isStreaming ? "stop.fill" : "play.fill")
-                }.disabled(!model.isStreaming && !model.devices.contains(where: { $0.state == "device" }))
-                Menu {
-                    Button("Restart Game…", systemImage: "arrow.clockwise") { model.showLaunchConfirmation = true }
-                        .disabled(model.selectedSerial == nil || model.selectedDevice?.state != "device")
-                    Divider()
-                    Button("Clear View Only", systemImage: "eraser") { model.clearVisibleEvents() }
-                    Button("Clear Device Log Buffer…", systemImage: "trash", role: .destructive) { showDeviceBufferWarning = true }
-                    Divider()
-                    Button("Copy Visible Logs", systemImage: "doc.on.doc") { model.copyVisibleEvents() }
-                    Button("Export Visible Logs…", systemImage: "square.and.arrow.up") { model.exportVisibleEvents() }
-                    Divider()
-                    Button("Check for Updates…", systemImage: "arrow.triangle.2.circlepath") { model.checkForUpdates(manual: true) }
-                } label: { Image(systemName: "ellipsis.circle").font(.title3) }
+                    Label(model.isStreaming ? "Stop All" : "Stream All Devices", systemImage: streamLabelIcon)
+                }.disabled(!canStream)
+                Button { model.takeScreenshot() } label: { Label("Chụp", systemImage: "camera") }
+                    .help("Chụp màn hình điện thoại, lưu vào \(model.captureDirectoryName)")
+                    .disabled(!deviceReady)
+                Button { model.toggleRecording() } label: {
+                    Label(model.isRecordingSelected ? "Dừng quay" : "Quay", systemImage: model.isRecordingSelected ? "stop.circle.fill" : "record.circle")
+                }
+                .tint(model.isRecordingSelected ? .red : nil)
+                .help("Quay màn hình điện thoại (tối đa 3 phút), lưu vào \(model.captureDirectoryName)")
+                .disabled(!deviceReady)
+                moreMenu
                 Spacer(minLength: 0)
             }
-            HStack(spacing: 12) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search: event name, parameter or value (e.g. shop level 3)", text: $model.searchText)
-                    .textFieldStyle(.plain)
-                if !model.searchText.isEmpty {
-                    Text("\(model.visibleEvents.count) found").font(.caption).foregroundStyle(.secondary)
-                    Button { model.searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.borderless).foregroundStyle(.secondary)
-                }
-                Divider().frame(height: 18)
-                Toggle("Auto-scroll", isOn: $model.autoScroll).toggleStyle(.checkbox).font(.caption)
-            }
-            .padding(9).background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            searchBar(compact: false)
         }
-        .padding(14)
+    }
+
+    private var actionIcons: some View {
+        HStack(spacing: 8) {
+            iconButton("bolt.fill", help: "Configure & Capture", tint: Theme.accent, enabled: deviceReady) { model.requestSetup() }
+            iconButton(streamLabelIcon, help: model.isStreaming ? "Stop All" : "Stream All Devices", enabled: canStream) {
+                model.isStreaming ? model.stopAllStreams() : model.startAllStreams()
+            }
+            iconButton("camera", help: "Chụp màn hình → \(model.captureDirectoryName)", enabled: deviceReady) { model.takeScreenshot() }
+            iconButton(model.isRecordingSelected ? "stop.circle.fill" : "record.circle",
+                       help: model.isRecordingSelected ? "Dừng quay" : "Quay màn hình → \(model.captureDirectoryName)",
+                       tint: model.isRecordingSelected ? .red : nil, enabled: deviceReady) { model.toggleRecording() }
+            iconButton("iphone.gen3", help: model.isMirroringSelected ? "Stop Mirroring" : "Mirror Screen",
+                       tint: model.isMirroringSelected ? Theme.green : nil, enabled: deviceReady && !model.isInstallingScrcpy) { model.toggleMirror() }
+            iconButton("bell.badge", help: "Notification Schedule…", enabled: deviceReady) { model.openNotificationSchedule() }
+        }
+    }
+
+    /// Medium width: everything on one row, buttons reduced to icons (tooltips carry the names).
+    private var mediumBar: some View {
+        HStack(spacing: 8) {
+            devicePicker(compact: true)
+            gamePicker(compact: true)
+            Divider().frame(height: 18)
+            actionIcons
+            searchBar(compact: true)
+            moreMenu
+        }
+    }
+
+    /// Narrow width: pickers on top, icons and search below.
+    private var narrowBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                devicePicker(compact: true)
+                gamePicker(compact: true)
+                Spacer(minLength: 0)
+                moreMenu
+            }
+            HStack(spacing: 8) {
+                actionIcons
+                searchBar(compact: true)
+            }
+        }
+    }
+
+    private func iconButton(_ symbol: String, help: String, tint: Color? = nil, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) { Image(systemName: symbol).font(.system(size: 14)).frame(width: 26, height: 22) }
+            .buttonStyle(.bordered).controlSize(.small)
+            .tint(tint)
+            .help(help)
+            .disabled(!enabled)
     }
 
     private var eventList: some View {
@@ -278,22 +409,117 @@ struct ContentView: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "info.circle")
-            Text(model.statusText).lineLimit(1)
-            Spacer()
-            if model.skippedLines > 0 {
-                Label("\(model.skippedLines) dòng log chưa đọc được", systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange).help(model.lastSkippedLine)
-            }
-            Text("Clear View never clears device logs").foregroundStyle(.secondary)
+        ViewThatFits(in: .horizontal) {
+            footerContent(showHint: true)
+            footerContent(showHint: false)
         }
         .font(.caption)
         .padding(.horizontal, 14).padding(.vertical, 9)
         .background(Theme.panel)
     }
+
+    private func footerContent(showHint: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "info.circle")
+            Text(model.statusText).lineLimit(1).truncationMode(.tail)
+            Spacer(minLength: 8)
+            if let f = model.lastSavedFile {
+                Button { NSWorkspace.shared.activateFileViewerSelecting([f]) } label: { Label("Hiện trong Finder", systemImage: "folder") }
+                    .buttonStyle(.link).help(f.path)
+            }
+            if model.skippedLines > 0 {
+                Label("\(model.skippedLines) dòng log chưa đọc được", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange).help(model.lastSkippedLine)
+            }
+            if showHint { Text("Clear View never clears device logs").foregroundStyle(.secondary) }
+        }
+    }
 }
 
+
+struct NotificationScheduleView: View {
+    @EnvironmentObject private var model: StudioModel
+    @Environment(\.dismiss) private var dismiss
+
+    private func countdown(_ d: Date) -> String {
+        let delta = d.timeIntervalSinceNow
+        return delta >= 0 ? "sau \(ScheduledAlarm.duration(delta))" : "đã qua \(ScheduledAlarm.duration(delta))"
+    }
+
+    var body: some View {
+        let notifs = model.alarms.filter(\.isNotification)
+        let others = model.alarms.filter { !$0.isNotification }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "bell.badge").foregroundStyle(Theme.accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Lịch thông báo").font(.title3.bold())
+                    Text("\(model.selectedGame.title) · \(model.selectedSerial ?? "")").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button { model.refreshAlarms() } label: { Label("Làm mới", systemImage: "arrow.clockwise") }
+                    .disabled(model.alarmsLoading)
+                Button { copyAll(notifs + others) } label: { Label("Copy", systemImage: "doc.on.doc") }
+                    .disabled(model.alarms.isEmpty)
+                Button("Đóng") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                if model.alarmsLoading { ProgressView().controlSize(.small) }
+                if let e = model.alarmsError { Text(e).foregroundStyle(.red).font(.callout) }
+                if !model.alarmsLoading, model.alarmsError == nil {
+                    if model.alarms.isEmpty {
+                        Text("Không có thông báo nào được hẹn trên máy cho game này. Mở game để game hẹn lịch, rồi bấm Làm mới.")
+                            .foregroundStyle(.secondary).padding(.vertical, 20)
+                    } else {
+                        let next = notifs.first(where: { $0.fireDate > Date() }) ?? notifs.first
+                        Text("\(notifs.count) thông báo đã hẹn" + (next.map { " · tiếp theo \(ScheduledAlarm.fullFormatter.string(from: $0.fireDate)) (\(countdown($0.fireDate)))" } ?? ""))
+                            .font(.callout.weight(.medium))
+                        ScrollView {
+                            VStack(spacing: 0) {
+                                ForEach(notifs) { row($0) }
+                                if !others.isEmpty {
+                                    Text("ALARM KHÁC CỦA APP (\(others.count))").font(.caption2.bold()).foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 14).padding(.bottom, 4)
+                                    ForEach(others) { row($0) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            Text("Chỉ đọc được lịch hẹn (giờ, kiểu, chu kỳ) từ AlarmManager của Android. Tiêu đề và nội dung thông báo được lưu trong app nên không xem được ở đây.")
+                .font(.caption).foregroundStyle(.secondary)
+            if let t = model.alarmsCheckedAt {
+                Text("Kiểm tra lúc \(t.formatted(date: .omitted, time: .standard)) theo giờ trên máy tính.").font(.caption2).foregroundStyle(.tertiary)
+            }
+        }
+        .padding(18)
+        .frame(minWidth: 460, idealWidth: 640, maxWidth: 820, minHeight: 360, idealHeight: 460, maxHeight: 700, alignment: .topLeading)
+        .background(Theme.bg)
+    }
+
+    private func row(_ a: ScheduledAlarm) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ScheduledAlarm.fullFormatter.string(from: a.fireDate)).font(.system(size: 13, weight: .semibold, design: .monospaced))
+                Text(countdown(a.fireDate)).font(.caption).foregroundStyle(a.fireDate > Date() ? Theme.green : .secondary)
+            }.frame(width: 170, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(a.modeText) · \(a.repeatText)").font(.system(size: 12))
+                Text(a.type).font(.caption2).foregroundStyle(.tertiary)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 7)
+        .overlay(alignment: .bottom) { Divider().opacity(0.5) }
+    }
+
+    private func copyAll(_ list: [ScheduledAlarm]) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(list.map(\.copyText).joined(separator: "\n"), forType: .string)
+    }
+}
 
 /// Wraps children onto new lines when they run out of horizontal space.
 struct FlowLayout: Layout {

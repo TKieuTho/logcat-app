@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0 — 2026-10-29
+- **Notification Schedule…** (menu ⋯): xem lịch thông báo local game đã hẹn trên máy (giờ nổ, đếm ngược, chính xác/trong khoảng, một lần/lặp), đọc từ AlarmManager qua `dumpsys alarm`. Chỉ xem được lịch, không xem được nội dung thông báo.
+- **Mirror Screen**: chiếu màn hình điện thoại lên Mac bằng scrcpy. Máy chưa có scrcpy thì app đề nghị cài tự động qua Homebrew (có xác nhận), hoặc mở hướng dẫn nếu chưa có Homebrew.
+- **Chụp / Quay màn hình**: lưu ảnh PNG và video MP4 (tối đa 3 phút mỗi lần, không có tiếng); đồng thời copy vào clipboard để dán (⌘V). Chọn thư mục lưu ở menu ⋯ (mặc định Downloads); nút "Hiện trong Finder" ở thanh dưới.
+- Giao diện **tự co theo cỡ cửa sổ**: cửa sổ nhỏ lại thì nút thành icon, ô chọn xếp hai hàng, chi tiết event chuyển xuống dưới danh sách; cửa sổ thu nhỏ được tới ~520x460.
+- Sửa căn lề: ô chọn Device/Game thẳng hàng với nhãn và ô search; nút ⋯ cùng độ cao với các nút.
+
 ## 0.5.3 — 2026-10-29
 - Giao diện: dòng event được chọn có nền nhạt và thanh hồng ở mép trái (thay màu xanh dương mặc định, chữ không bị đổi màu). Lưu ý: không còn chọn bằng phím mũi tên.
 - Nền phụ chế độ sáng chuyển sang trắng nhẹ (bớt ngả vàng); chế độ tối đổi từ nâu sang xanh đen trung tính.
