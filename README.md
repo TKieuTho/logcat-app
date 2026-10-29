@@ -48,4 +48,7 @@ Chỉ cần làm một lần cho mỗi bản tải mới. Build bằng `Build an
 - App chưa ký/notarize (xem phần Gatekeeper ở trên). Bản build chỉ chạy trên Apple Silicon; Mac Intel tự build từ source.
 - Mới thử trên một số thiết bị Android; nên kiểm tra thực tế trước khi dùng cho báo cáo chính thức.
 
+## Source của từng bản build
+Mỗi bản phát hành có tag trùng số version. Source của bản `X.Y.Z` nằm ở `https://github.com/TKieuTho/logcat-app/tree/vX.Y.Z` (ví dụ [v0.5.3](https://github.com/TKieuTho/logcat-app/tree/v0.5.3)); file zip nằm ở [Releases](https://github.com/TKieuTho/logcat-app/releases). Số version của bản đang chạy hiển thị cạnh tên app.
+
 Lịch sử thay đổi: xem [CHANGELOG.md](CHANGELOG.md).
