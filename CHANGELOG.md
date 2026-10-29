@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.3 — 2026-10-29
+- Giao diện: dòng event được chọn có nền nhạt và thanh hồng ở mép trái (thay màu xanh dương mặc định, chữ không bị đổi màu). Lưu ý: không còn chọn bằng phím mũi tên.
+- Nền phụ chế độ sáng chuyển sang trắng nhẹ (bớt ngả vàng); chế độ tối đổi từ nâu sang xanh đen trung tính.
+- Bỏ dòng mô tả trong hộp xác nhận Configure.
+
 ## 0.5.2 — 2026-10-29
 - Hiển thị log **từ lúc bấm nút bắt đầu** (Configure & Capture / Stream All Devices); log cũ trong bộ nhớ máy không hiện nữa. Cách làm: ghi một dòng mốc vào log thiết bị rồi bỏ qua mọi thứ trước mốc, không phụ thuộc đồng hồ máy.
 - **Không tự force-stop / mở lại game nữa.** Configure & Capture chỉ bật thuộc tính debug rồi bắt đầu ghi. Cần khởi động lại game (debug mode chỉ nhận khi game khởi động) thì dùng menu ⋯ → Restart Game….

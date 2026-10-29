@@ -27,8 +27,6 @@ struct ContentView: View {
         .alert("Configure Firebase Analytics logging?", isPresented: $model.showSetupConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Configure Device") { model.confirmSetup() }
-        } message: {
-            Text("Thay đổi thuộc tính debug Firebase trên \(model.selectedSerial ?? "thiết bị đã chọn") cho \(model.selectedGame.title), rồi bắt đầu hiển thị log từ lúc bấm (log cũ trong máy không hiện). App không tự đóng hay mở lại game. Debug mode chỉ có hiệu lực khi game khởi động; nếu game đang chạy mà event chưa hiện thì dùng Menu ⋯ → Restart Game….")
         }
         .alert("Restart game to begin capture?", isPresented: $model.showLaunchConfirmation) {
             Button("Hủy", role: .cancel) {}
@@ -155,17 +153,29 @@ struct ContentView: View {
             }.padding(.horizontal, 14).padding(.vertical, 10)
             Divider()
             ScrollViewReader { proxy in
-                List(selection: Binding(get: { model.selectedEventID }, set: { model.selectedEventID = $0 })) {
-                    ForEach(model.visibleEvents) { event in
-                        Group {
-                            if model.detailedList { card(event) } else { compactRow(event) }
+                // Custom rows instead of List selection: the system highlight is saturated blue and recolors the text.
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(model.visibleEvents) { event in
+                            let selected = model.selectedEventID == event.id
+                            VStack(spacing: 0) {
+                                Group {
+                                    if model.detailedList { card(event) } else { compactRow(event) }
+                                }
+                                .padding(.horizontal, 14).padding(.vertical, 6)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(selected ? Color.primary.opacity(0.03) : Color.clear)
+                                .overlay(alignment: .leading) {
+                                    Rectangle().fill(Theme.accent).frame(width: 3).opacity(selected ? 1 : 0)
+                                }
+                                Divider().opacity(0.5)
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture { model.selectedEventID = event.id }
+                            .id(event.id)
                         }
-                        .padding(.vertical, 4)
-                        .tag(event.id)
-                        .id(event.id)
                     }
                 }
-                .listStyle(.plain)
                 .onChange(of: model.visibleEvents.last?.id) { id in
                     if model.autoScroll, let id { proxy.scrollTo(id, anchor: .bottom) }
                 }
@@ -339,6 +349,6 @@ enum Theme {
     private static func dyn(_ light: NSColor, _ dark: NSColor) -> Color {
         Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light })
     }
-    static let bg = dyn(NSColor.white, NSColor(red: 0.18, green: 0.14, blue: 0.13, alpha: 1))
-    static let panel = dyn(NSColor(red: 0.95, green: 0.94, blue: 0.92, alpha: 1), NSColor(red: 0.24, green: 0.19, blue: 0.18, alpha: 1))
+    static let bg = dyn(NSColor.white, NSColor(red: 0.10, green: 0.11, blue: 0.13, alpha: 1))
+    static let panel = dyn(NSColor(red: 0.975, green: 0.975, blue: 0.975, alpha: 1), NSColor(red: 0.15, green: 0.16, blue: 0.19, alpha: 1))
 }
