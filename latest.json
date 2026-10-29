@@ -1,6 +1,6 @@
 {
-  "version": "0.5.2",
+  "version": "0.5.3",
   "date": "2026-10-29",
-  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.5.2/Logcat-0.5.2-macOS-arm64.zip",
-  "notes": "Chỉ hiển thị log từ lúc bấm bắt đầu; không tự force-stop game (có menu Restart Game… khi cần)."
+  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.5.3/Logcat-0.5.3-macOS-arm64.zip",
+  "notes": "Đổi màu giao diện: dòng chọn nhạt, nền sáng trắng nhẹ, chế độ tối xanh đen."
 }
