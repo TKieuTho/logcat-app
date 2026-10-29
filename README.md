@@ -1,17 +1,26 @@
 # Logcat — Sun Firebase Event Studio (macOS)
 
-A native SwiftUI macOS app starter for Sun Studio QA. Targets macOS 13+ and Apple Silicon M2/M4.
+App macOS (SwiftUI, macOS 13+, Apple Silicon) giúp QA xem **event** và **user property** Firebase Analytics từ thiết bị Android qua ADB, kèm giờ gửi chính xác đến mili giây.
 
-## User experience
-- Detects connected Android devices with USB debugging enabled; device list refreshes every 3 seconds.
-- Supports independent selection of two or more connected devices.
-- Downloads Google's official macOS Android Platform Tools on first launch when no `adb` is found.
-- Selects one of the five Sun game package IDs.
-- Asks for confirmation before changing Firebase debug properties and separately before force-stopping/relaunching a game.
-- Streams `FA` and `FA-SVC` Logcat lines concurrently from all authorized connected devices, with timestamps and raw lines. Each stream is scoped to its own ADB serial.
-- Search/filter, inspect/copy raw event, copy visible logs, export visible logs.
-- **Clear View only** removes rows from this app's display. A separate destructive menu action is required to clear the Android device's log buffer.
-- Does not fabricate sample device events. Firebase DebugView remains the official source of truth.
+## Tính năng
+- Tự nhận thiết bị Android đã bật USB debugging (làm mới mỗi 3 giây); chọn được nhiều thiết bị độc lập.
+- Nếu máy chưa có `adb`, app tự tải Android Platform Tools của Google ở lần mở đầu (cần internet).
+- Chỉ hiển thị log **từ lúc bấm nút bắt đầu** (Configure & Capture hoặc Stream All Devices). Log cũ trong bộ nhớ máy không hiện.
+- Đọc log tag `FA` và `FA-SVC`, nhiều thiết bị cùng lúc, mỗi luồng gắn với serial ADB của nó. Ghi nhận cả event và **user property** (`Setting user property: name, value`).
+- Hai chế độ xem (nút ở đầu danh sách, ghi nhớ lựa chọn): **Detailed** (mỗi event là một thẻ, tham số hiện ngay dạng chip key/value) và **Compact** (mỗi event một dòng). Tab lọc **All / Events / User Props**.
+- Mỗi event có giờ gửi `HH:mm:ss.SSS` (lấy từ logcat). Bấm vào event để xem bảng tham số và log gốc ("Raw log").
+- Search nhiều từ (AND) trên tên event, tên param, giá trị param. Copy từng event, copy / export các event đang hiển thị.
+- Giao diện Hệ thống / Sáng / Tối.
+- **Cập nhật ngay trong app:** menu ⋯ → Check for Updates…, có bản mới thì bấm "Cập nhật ngay", app tự tải, thay bản mới và mở lại.
+
+## Dùng
+1. Chọn **Device** và **Game**.
+2. **Configure & Capture** (lần đầu với mỗi máy/game): xác nhận để bật thuộc tính debug Firebase (`setprop`), app bắt đầu ghi log ngay. App **không** tự đóng hay mở lại game.
+3. Debug mode chỉ có hiệu lực khi game khởi động. Nếu game đang chạy mà event chưa hiện, dùng menu ⋯ → **Restart Game…** (có xác nhận).
+4. Máy đã setup rồi hoặc muốn theo dõi nhiều máy: **Stream All Devices**.
+5. **Clear View Only** (⇧⌘K) chỉ xóa danh sách trong app. **Clear Device Log Buffer…** (có cảnh báo) mới chạy `adb logcat -c` trên máy.
+
+Firebase DebugView vẫn là nguồn đối chiếu chính; Logcat chỉ là bằng chứng phụ. App không tạo event giả.
 
 ## Cài bản tải về (.zip) và xử lý khi macOS chặn
 App chưa được Apple ký/notarize, nên lần đầu mở macOS có thể báo **"Logcat can't be opened"** hoặc **"Logcat is damaged"**. Đây là Gatekeeper, không phải lỗi app.
@@ -26,17 +35,17 @@ App chưa được Apple ký/notarize, nên lần đầu mở macOS có thể b�
 
 Chỉ cần làm một lần cho mỗi bản tải mới. Build bằng `Build and Install.command` thì không bị chặn vì script đã tự gỡ quarantine.
 
-## Build and install without typing Terminal commands
-1. On a Mac, unzip this folder.
-2. Double-click `Build and Install.command` in Finder.
-3. If macOS asks, approve opening the script. It uses Apple's installed Swift toolchain to build and copies the app to `~/Applications`.
-4. If the Mac does not have Xcode Command Line Tools / Xcode installed, install them first; the script will show a dialog rather than asking the user to type commands.
+## Tự build từ source
+1. Cài Xcode Command Line Tools (`xcode-select --install`).
+2. Double-click `Build and Install.command`. App được build, ký ad-hoc và cài vào `~/Applications`.
 
-This source project has not been compiled or hardware-tested in this environment. USB access, Google download availability, macOS Gatekeeper behavior, and real-device log streaming must be verified on the target Mac before production use.
+## Giới hạn
+- Chỉ đọc tag `FA` và `FA-SVC`. Event ở tag khác sẽ không hiện.
+- Giờ hiển thị là giờ SDK ghi log trên máy, không phải giờ server nhận.
+- Nếu có dòng log event/property mà app chưa đọc được, thanh dưới cùng hiện cảnh báo màu cam (rê chuột để xem dòng đó).
+- Chỉ giữ 50.000 dòng gần nhất trong bộ nhớ.
+- Danh sách chọn bằng chuột, chưa hỗ trợ phím mũi tên. Chưa có chế độ nhiều khung song song cho từng thiết bị.
+- App chưa ký/notarize (xem phần Gatekeeper ở trên). Bản build chỉ chạy trên Apple Silicon; Mac Intel tự build từ source.
+- Mới thử trên một số thiết bị Android; nên kiểm tra thực tế trước khi dùng cho báo cáo chính thức.
 
-## Important technical limitations in this starter
-- The stream list combines lines from all connected authorized devices; selecting a device filters the list to that device. Separate side-by-side panes are not implemented yet.
-- Google Platform Tools are fetched from Google's official download endpoint on first launch if not already present. Internet is required for this first setup.
-- This starter is unsigned and not notarized. Gatekeeper may require approval. A distributable DMG requires signing/notarization with the developer's Apple credentials.
-- ADB's `setprop` changes are made only after the user confirms. Restarting the game requires a second confirmation.
-- `Clear View` does not invoke `adb logcat -c`.
+Lịch sử thay đổi: xem [CHANGELOG.md](CHANGELOG.md).
