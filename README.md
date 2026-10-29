@@ -2,19 +2,27 @@
 
 App macOS (SwiftUI, macOS 13+, Apple Silicon) giúp QA xem **event** và **user property** Firebase Analytics từ thiết bị Android qua ADB, kèm giờ gửi chính xác đến mili giây.
 
-## Tính năng
-- Tự nhận thiết bị Android đã bật USB debugging (làm mới mỗi 3 giây); chọn được nhiều thiết bị độc lập.
-- Nếu máy chưa có `adb`, app tự tải Android Platform Tools của Google ở lần mở đầu (cần internet).
-- Chỉ hiển thị log **từ lúc bấm nút bắt đầu** (Configure & Capture hoặc Stream All Devices). Log cũ trong bộ nhớ máy không hiện.
-- Đọc log tag `FA` và `FA-SVC`, nhiều thiết bị cùng lúc, mỗi luồng gắn với serial ADB của nó. Ghi nhận cả event và **user property** (`Setting user property: name, value`).
-- Hai chế độ xem (nút ở đầu danh sách, ghi nhớ lựa chọn): **Detailed** (mỗi event là một thẻ, tham số hiện ngay dạng chip key/value) và **Compact** (mỗi event một dòng). Tab lọc **All / Events / User Props**.
-- Mỗi event có giờ gửi `HH:mm:ss.SSS` (lấy từ logcat). Bấm vào event để xem bảng tham số và log gốc ("Raw log").
-- Search nhiều từ (AND) trên tên event, tên param, giá trị param. Copy từng event, copy / export các event đang hiển thị.
-- **Notification Schedule…** (menu ⋯): lịch thông báo local game đã hẹn trên máy (giờ nổ, đếm ngược, kiểu hẹn, chu kỳ lặp), đọc từ AlarmManager (`dumpsys alarm`). Chỉ xem được lịch, không xem được tiêu đề/nội dung thông báo.
-- **Mirror Screen**: chiếu màn hình điện thoại lên Mac bằng [scrcpy](https://github.com/Genymobile/scrcpy). Chưa có scrcpy thì app hỏi cài tự động qua Homebrew (hoặc mở hướng dẫn nếu chưa có Homebrew).
-- **Chụp / Quay màn hình**: lưu PNG / MP4 (tối đa 3 phút mỗi lần, không có tiếng) và copy vào clipboard để dán (⌘V). Mặc định lưu vào Downloads; đổi ở menu ⋯ → "Thư mục lưu ảnh/video".
-- Giao diện tự co theo cỡ cửa sổ (nút thành icon, chi tiết xuống dưới danh sách khi cửa sổ hẹp). Chế độ Hệ thống / Sáng / Tối.
-- **Cập nhật ngay trong app:** menu ⋯ → Check for Updates…, có bản mới thì bấm "Cập nhật ngay", app tự tải, thay bản mới và mở lại.
+## Bảng tính năng
+
+| Nhóm | Tính năng | Mô tả | Truy cập |
+| --- | --- | --- | --- |
+| Log | Nhận thiết bị | Tự phát hiện máy Android (làm mới 3 giây), chọn nhiều máy độc lập; tự tải `adb` nếu máy chưa có | Ô Device |
+| Log | Stream log Firebase | Đọc tag `FA`, `FA-SVC` từ nhiều máy cùng lúc; chỉ hiện log từ lúc bấm bắt đầu | Configure & Capture, Stream All Devices |
+| Log | Event và User Property | Ghi nhận cả event và `Setting user property`; lọc All / Events / User Props | Tab ở đầu danh sách |
+| Log | Giờ gửi | Hiển thị `HH:mm:ss.SSS` lấy từ logcat; giữ event gửi lặp, chỉ gộp bản sao giữa các kiểu log | Mỗi dòng/thẻ event |
+| Log | Hai chế độ xem | Detailed (thẻ, tham số dạng chip) và Compact (một dòng) | Nút cạnh tab lọc |
+| Log | Chi tiết event | Bảng key/value của tham số, log gốc (Raw log) | Bấm vào event |
+| Log | Search | Nhiều từ (AND) trên tên event, tên và giá trị param | Ô Search |
+| Log | Copy / Export | Copy từng event; copy hoặc export các event đang hiển thị | Nút Copy, menu ⋯ |
+| Log | Cảnh báo | Báo khi có dòng log event/property chưa đọc được | Thanh dưới cùng |
+| Log | Clear View / Clear Device Buffer | Xóa danh sách trong app (⇧⌘K) / xóa log trên máy (`adb logcat -c`, có xác nhận) | Menu ⋯ |
+| Thiết bị | Configure & Capture | Bật thuộc tính debug Firebase (`setprop`) rồi bắt đầu ghi; không tự restart game | Nút Configure & Capture |
+| Thiết bị | Restart Game | Force-stop và mở lại game để nhận debug mode (có xác nhận) | Menu ⋯ |
+| Thiết bị | Notification Schedule | Lịch thông báo local game đã hẹn: giờ nổ, đếm ngược, kiểu hẹn, chu kỳ lặp (không có nội dung) | Menu ⋯ |
+| Thiết bị | Mirror Screen | Chiếu màn hình điện thoại lên Mac bằng scrcpy; tự cài qua Homebrew nếu chưa có | Menu ⋯ |
+| Thiết bị | Chụp / Quay màn hình | Lưu PNG / MP4 (tối đa 3 phút, không có tiếng), copy vào clipboard; chọn thư mục lưu | Nút Chụp, Quay; menu ⋯ |
+| App | Giao diện | Hệ thống / Sáng / Tối; tự co theo cỡ cửa sổ | Góc phải trên |
+| App | Tự cập nhật | Kiểm tra bản mới khi mở app; bấm "Cập nhật ngay" để tự tải, thay bản và mở lại | Menu ⋯ → Check for Updates… |
 
 ## Dùng
 1. Chọn **Device** và **Game**.
