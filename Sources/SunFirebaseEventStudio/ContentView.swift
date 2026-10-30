@@ -127,12 +127,33 @@ struct ContentView: View {
                 Image(systemName: "sun.max").tag("light")
                 Image(systemName: "moon").tag("dark")
             }.pickerStyle(.segmented).frame(width: 110).labelsHidden().help("Giao diện: theo hệ thống / sáng / tối")
-            Circle().fill(model.isStreaming ? Theme.green : .gray).frame(width: 8, height: 8)
-                .help(model.isStreaming ? "Đang ghi log:\n" + model.liveSummary.joined(separator: "\n") : "Chưa ghi log")
+            let dot = Circle().fill(model.isStreaming ? Theme.green : .gray).frame(width: 8, height: 8)
+            if !wide && model.isStreaming {
+                // Narrow window has no room for the list; the dot opens it so any live phone can still be stopped.
+                Menu {
+                    ForEach(model.liveStreams, id: \.serial) { live in
+                        Button("Dừng: \(live.text)", systemImage: "stop.circle") { model.stopStream(for: live.serial) }
+                    }
+                } label: {
+                    Label("Đang ghi log", systemImage: "circle.fill").labelStyle(.iconOnly)
+                        .font(.system(size: 9)).foregroundStyle(Theme.green)
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().tint(Theme.green)
+                .help("Đang ghi log:\n" + model.liveSummary.joined(separator: "\n") + "\n(bấm để dừng)")
+            } else {
+                dot.help(model.isStreaming ? "Đang ghi log:\n" + model.liveSummary.joined(separator: "\n") : "Chưa ghi log")
+            }
             if wide {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(model.isStreaming ? "LIVE" : "NOT STREAMING").font(.caption.bold()).foregroundStyle(.secondary)
-                    ForEach(model.liveSummary, id: \.self) { Text($0).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
+                    ForEach(model.liveStreams, id: \.serial) { live in
+                        HStack(spacing: 4) {
+                            Text(live.text).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                            Button { model.stopStream(for: live.serial) } label: {
+                                Image(systemName: "stop.circle.fill").font(.caption2).foregroundStyle(.red.opacity(0.8))
+                            }.buttonStyle(.plain).help("Dừng ghi log của \(live.text)")
+                        }
+                    }
                 }
             }
         }
@@ -558,7 +579,7 @@ struct NotificationScheduleView: View {
     @Environment(\.dismiss) private var dismiss
 
     private func countdown(_ d: Date) -> String {
-        let delta = d.timeIntervalSinceNow
+        let delta = d.timeIntervalSince(model.alarmsDeviceNow)
         return delta >= 0 ? "sau \(ScheduledAlarm.duration(delta))" : "đã qua \(ScheduledAlarm.duration(delta))"
     }
 
@@ -587,8 +608,8 @@ struct NotificationScheduleView: View {
                         Text("Không có thông báo nào được hẹn trên máy cho game này. Mở game để game hẹn lịch, rồi bấm Làm mới.")
                             .foregroundStyle(.secondary).padding(.vertical, 20)
                     } else {
-                        let next = notifs.first(where: { $0.fireDate > Date() }) ?? notifs.first
-                        Text("\(notifs.count) thông báo đã hẹn" + (next.map { " · tiếp theo \(ScheduledAlarm.fullFormatter.string(from: $0.fireDate)) (\(countdown($0.fireDate)))" } ?? ""))
+                        let next = notifs.first(where: { $0.fireDate > model.alarmsDeviceNow }) ?? notifs.first
+                        Text("\(notifs.count) thông báo đã hẹn" + (next.map { " · tiếp theo \(model.alarmTime($0.fireDate)) (\(countdown($0.fireDate)))" } ?? ""))
                             .font(.callout.weight(.medium))
                         ScrollView {
                             VStack(spacing: 0) {
@@ -608,6 +629,10 @@ struct NotificationScheduleView: View {
                 .font(.caption).foregroundStyle(.secondary)
             if let t = model.alarmsCheckedAt {
                 Text("Kiểm tra lúc \(t.formatted(date: .omitted, time: .standard)) theo giờ trên máy tính.").font(.caption2).foregroundStyle(.tertiary)
+                if abs(model.alarmsClockOffset) > 60 {
+                    Text("⚠️ Đồng hồ điện thoại đang là \(model.alarmTime(model.alarmsDeviceNow)), lệch \(ScheduledAlarm.duration(model.alarmsClockOffset)) \(model.alarmsClockOffset > 0 ? "nhanh" : "chậm") so với máy tính. Giờ hẹn và \"sau …\" ở đây tính theo đồng hồ điện thoại.")
+                        .font(.caption2).foregroundStyle(.orange)
+                }
             }
         }
         .padding(18)
@@ -618,8 +643,8 @@ struct NotificationScheduleView: View {
     private func row(_ a: ScheduledAlarm) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(ScheduledAlarm.fullFormatter.string(from: a.fireDate)).font(.system(size: 13, weight: .semibold, design: .monospaced))
-                Text(countdown(a.fireDate)).font(.caption).foregroundStyle(a.fireDate > Date() ? Theme.green : .secondary)
+                Text(model.alarmTime(a.fireDate)).font(.system(size: 13, weight: .semibold, design: .monospaced))
+                Text(countdown(a.fireDate)).font(.caption).foregroundStyle(a.fireDate > model.alarmsDeviceNow ? Theme.green : .secondary)
             }.frame(width: 170, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(a.modeText) · \(a.repeatText)").font(.system(size: 12))

@@ -257,8 +257,15 @@ extension ADBService {
         _ = try? await run(["-s", serial, "shell", "rm", remote])
     }
 
-    func fetchAlarms(serial: String, package: String) async throws -> [ScheduledAlarm] {
+    /// Alarms plus the phone's own clock: QA phones are often set to another date/time zone, and every
+    /// countdown has to be measured against the phone's "now", not the Mac's.
+    func fetchAlarms(serial: String, package: String) async throws -> (alarms: [ScheduledAlarm], deviceNow: Date, timeZone: TimeZone) {
+        let clock = try await run(["-s", serial, "shell", "date +%s; getprop persist.sys.timezone"])
+        let lines = clock.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+        let deviceNow = lines.first.flatMap(TimeInterval.init).map { Date(timeIntervalSince1970: $0) } ?? Date()
+        let tz = lines.dropFirst().first.flatMap { TimeZone(identifier: $0) } ?? .current
         let dump = try await run(["-s", serial, "shell", "dumpsys", "alarm"])
-        return await Task.detached { AlarmParser.parse(dump: dump, package: package) }.value
+        let alarms = await Task.detached { AlarmParser.parse(dump: dump, package: package, now: deviceNow) }.value
+        return (alarms, deviceNow, tz)
     }
 }

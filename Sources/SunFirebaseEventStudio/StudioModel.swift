@@ -105,6 +105,15 @@ final class StudioModel: ObservableObject {
     @Published var alarmsLoading = false
     @Published var alarmsError: String?
     @Published var alarmsCheckedAt: Date?
+    /// Phone clock minus Mac clock when the list was read, and the phone's time zone.
+    @Published var alarmsClockOffset: TimeInterval = 0
+    @Published var alarmsTimeZone: TimeZone = .current
+    /// "Now" on the phone being inspected.
+    func alarmTime(_ d: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = ScheduledAlarm.fullFormatter.dateFormat; f.timeZone = alarmsTimeZone
+        return f.string(from: d)
+    }
+    var alarmsDeviceNow: Date { Date().addingTimeInterval(alarmsClockOffset) }
     var lastSkippedLine = ""
 
     private let adb = ADBService()
@@ -214,10 +223,11 @@ final class StudioModel: ObservableObject {
         }
     }
     /// Start/Stop acts on the chosen phone only; the header LIVE light (`isStreaming`) stays "any phone".
-    /// One line per live phone, e.g. "SM A055F · Snake Escape", for the header.
-    var liveSummary: [String] {
-        streamingSerials.sorted().map { "\(deviceName($0)) · \((streamGames[$0] ?? selectedGame).title)" }
+    /// One entry per live phone, e.g. "SM A055F · Snake Escape", for the header.
+    var liveStreams: [(serial: String, text: String)] {
+        streamingSerials.sorted().map { ($0, "\(deviceName($0)) · \((streamGames[$0] ?? selectedGame).title)") }
     }
+    var liveSummary: [String] { liveStreams.map(\.text) }
     var isStreamingSelected: Bool { selectedSerial.map(streamingSerials.contains) ?? false }
     var isRecordingSelected: Bool { selectedSerial.map(recordingSerials.contains) ?? false }
 
@@ -413,7 +423,10 @@ final class StudioModel: ObservableObject {
         alarmsLoading = true; alarmsError = nil
         let package = selectedGame.rawValue
         Task {
-            do { alarms = try await adb.fetchAlarms(serial: serial, package: package); alarmsCheckedAt = Date() }
+            do {
+                let r = try await adb.fetchAlarms(serial: serial, package: package)
+                alarms = r.alarms; alarmsClockOffset = r.deviceNow.timeIntervalSinceNow; alarmsTimeZone = r.timeZone; alarmsCheckedAt = Date()
+            }
             catch { alarmsError = error.localizedDescription }
             alarmsLoading = false
         }
