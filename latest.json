@@ -1,6 +1,6 @@
 {
-  "version": "0.6.0",
-  "date": "2026-10-29",
-  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.6.0/Logcat-0.6.0-macOS-arm64.zip",
-  "notes": "Thêm Notification Schedule, Mirror Screen, Chụp/Quay màn hình; giao diện tự co theo cỡ cửa sổ."
+  "version": "0.6.1",
+  "date": "2026-10-30",
+  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.6.1/Logcat-0.6.1-macOS-arm64.zip",
+  "notes": "Thẻ trạng thái, thanh công cụ một hàng + tooltip, khung chi tiết thu gọn được, thanh cuộn mảnh."
 }
