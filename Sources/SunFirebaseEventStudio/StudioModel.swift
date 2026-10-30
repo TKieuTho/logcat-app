@@ -3,6 +3,18 @@ import SwiftUI
 import Combine
 import AppKit
 
+/// What the app is doing / just finished, shown as a small pill in the header.
+struct Activity: Identifiable, Equatable {
+    enum Kind { case working, done, error }
+    let id = UUID()
+    var kind: Kind
+    var emoji: String
+    var title: String
+    var detail: String?
+    var startedAt: Date?
+    var fileURL: URL?
+}
+
 @MainActor
 final class StudioModel: ObservableObject {
     @Published var devices: [ADBDevice] = []
@@ -16,6 +28,11 @@ final class StudioModel: ObservableObject {
     @Published var showLaunchConfirmation = false
     @Published var errorMessage: String?
     @Published var selectedEventID: UUID?
+    @Published var activity: Activity?
+    private var activityTask: Task<Void, Never>?
+    @Published var detailVisible = true      // split layout (wide window)
+    @Published var drawerOpen = false        // floating drawer (narrow window)
+    @Published var splitLayout = true        // set by the view from the window width
     @Published var autoScroll = true
     @Published var kindFilter: KindFilter = .all
     @AppStorage("detailedList") var detailedList = true
@@ -71,6 +88,24 @@ final class StudioModel: ObservableObject {
     private static func matches(_ event: LogEvent, tokens: [String]) -> Bool {
         tokens.allSatisfy { event.blob.contains($0) }
     }
+    func setActivity(_ kind: Activity.Kind, _ emoji: String, _ title: String, detail: String? = nil,
+                     since: Date? = nil, file: URL? = nil, clearAfter: TimeInterval? = nil) {
+        activityTask?.cancel()
+        let a = Activity(kind: kind, emoji: emoji, title: title, detail: detail, startedAt: since, fileURL: file)
+        activity = a
+        let delay = clearAfter ?? (kind == .working ? nil : (kind == .error ? 9 : 7))
+        guard let delay else { return }
+        activityTask = Task {
+            try? await Task.sleep(for: .seconds(delay))
+            if !Task.isCancelled, activity?.id == a.id { activity = nil }
+        }
+    }
+    func clearActivity() { activityTask?.cancel(); activity = nil }
+
+    func openDetail() { detailVisible = true; drawerOpen = true }
+    func closeDetail() { if splitLayout { detailVisible = false } else { drawerOpen = false } }
+    func toggleDetail() { if splitLayout { detailVisible.toggle() } else { drawerOpen.toggle() } }
+    var detailShown: Bool { splitLayout ? detailVisible : drawerOpen }
     var selectedEvent: LogEvent? { visibleEvents.first(where: { $0.id == selectedEventID }) }
 
     /// manual = user pressed the button (always report the result); otherwise only speak up when a newer version exists.
@@ -125,6 +160,7 @@ final class StudioModel: ObservableObject {
     func takeScreenshot() {
         guard let serial = selectedSerial else { return }
         let url = captureURL(serial: serial, ext: "png").url
+        setActivity(.working, "📸", "Đang chụp màn hình…")
         Task {
             do {
                 try await adb.screenshot(serial: serial, to: url)
@@ -133,13 +169,18 @@ final class StudioModel: ObservableObject {
                 pb.clearContents()
                 if let img = NSImage(contentsOf: url) { pb.writeObjects([img]) }
                 statusText = "Đã lưu ảnh vào \(captureDirectoryName) và copy vào clipboard (⌘V để dán): \(url.lastPathComponent)"
-            } catch { errorMessage = error.localizedDescription }
+                setActivity(.done, "📸", "Chụp xong rồi!", detail: "Ảnh đã copy, dán ngay được (⌘V) · lưu ở \(captureDirectoryName)", file: url, clearAfter: 9)
+            } catch {
+                errorMessage = error.localizedDescription
+                setActivity(.error, "😿", "Chụp không được", detail: error.localizedDescription)
+            }
         }
     }
 
     func toggleRecording() {
         guard let serial = selectedSerial else { return }
         if recordingSerials.contains(serial) {
+            setActivity(.working, "💾", "Đang lưu video…")
             Task { await adb.stopRecording(serial: serial) }
             return
         }
@@ -152,6 +193,7 @@ final class StudioModel: ObservableObject {
             recordProcesses[serial] = p
             recordingSerials.insert(serial)
             statusText = "Đang quay màn hình (tối đa 3 phút, bấm Dừng để lưu)…"
+            setActivity(.working, "🎬", "Đang quay màn hình", detail: "Bấm Dừng quay để lưu (tối đa 3 phút)", since: Date())
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -165,7 +207,9 @@ final class StudioModel: ObservableObject {
             pb.clearContents()
             pb.writeObjects([local as NSURL])
             statusText = "Đã lưu video vào \(captureDirectoryName) và copy file vào clipboard (⌘V dán vào Finder/Slack/Notion): \(local.lastPathComponent)"
+            setActivity(.done, "🎬", "Quay xong rồi!", detail: "Video đã copy, dán được (⌘V) · lưu ở \(captureDirectoryName)", file: local, clearAfter: 10)
         } catch {
+            setActivity(.error, "😿", "Lưu video không được", detail: error.localizedDescription)
             errorMessage = "Không lưu được video: \(error.localizedDescription)" + (output.isEmpty ? "" : "\n\(String(output.suffix(300)))")
         }
     }
@@ -205,6 +249,7 @@ final class StudioModel: ObservableObject {
             try p.run()
             mirrorProcesses[serial] = p
             mirroringSerials.insert(serial)
+            setActivity(.done, "📱", "Đang chiếu màn hình", detail: "Cửa sổ scrcpy đã mở", clearAfter: 4)
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -218,6 +263,7 @@ final class StudioModel: ObservableObject {
         guard let brew = brewPath, !isInstallingScrcpy else { return }
         isInstallingScrcpy = true
         statusText = "Đang cài scrcpy bằng Homebrew (vài phút)…"
+        setActivity(.working, "📦", "Đang cài scrcpy", detail: "Bằng Homebrew, mất vài phút", since: Date())
         Task {
             let result: (Int32, String) = await Task.detached {
                 let p = Process()
@@ -233,8 +279,8 @@ final class StudioModel: ObservableObject {
                 return (p.terminationStatus, String(data: data, encoding: .utf8) ?? "")
             }.value
             isInstallingScrcpy = false
-            if result.0 == 0 { statusText = "Đã cài scrcpy"; toggleMirror() }
-            else { statusText = "Cài scrcpy thất bại"; errorMessage = "Không cài được scrcpy:\n" + String(result.1.suffix(500)) }
+            if result.0 == 0 { statusText = "Đã cài scrcpy"; setActivity(.done, "📦", "Đã cài scrcpy xong"); toggleMirror() }
+            else { statusText = "Cài scrcpy thất bại"; setActivity(.error, "😿", "Cài scrcpy không được"); errorMessage = "Không cài được scrcpy:\n" + String(result.1.suffix(500)) }
         }
     }
     func openScrcpyInstallGuide() {
@@ -260,6 +306,7 @@ final class StudioModel: ObservableObject {
         guard let info = updateInfo, !isInstallingUpdate else { return }
         isInstallingUpdate = true
         statusText = "Đang tải bản \(info.version)…"
+        setActivity(.working, "🚀", "Đang tải bản \(info.version)", detail: "App sẽ tự mở lại sau khi cập nhật", since: Date())
         Task {
             do {
                 try await Updater.install(info)
@@ -282,6 +329,7 @@ final class StudioModel: ObservableObject {
             do {
                 try await adb.configureFirebase(serial: serial, package: selectedGame)
                 startStream(for: serial)
+                setActivity(.done, "✨", "Đã bật debug Firebase", detail: "Đang ghi log từ bây giờ")
                 statusText = "Đang ghi log từ bây giờ. Nếu event chưa hiện, mở lại game (Menu ⋯ → Restart Game…) để bật debug mode."
             } catch { errorMessage = error.localizedDescription }
         }
@@ -322,6 +370,7 @@ final class StudioModel: ObservableObject {
             }
             isStreaming = !streamingSerials.isEmpty
             statusText = "Streaming FA / FA-SVC from \(streamingSerials.count) device(s)"
+            setActivity(.done, "🐾", "Đang ghi log", detail: "\(streamingSerials.count) máy · chỉ hiện log từ lúc này", clearAfter: 5)
         } catch { errorMessage = error.localizedDescription }
     }
     func stopStream() {
@@ -337,6 +386,7 @@ final class StudioModel: ObservableObject {
         pendingMarkers[serial] = nil
         isStreaming = !streamingSerials.isEmpty
         statusText = isStreaming ? "Streaming FA / FA-SVC from \(streamingSerials.count) device(s)" : "Not streaming"
+        if !isStreaming { setActivity(.done, "💤", "Đã dừng ghi log", clearAfter: 4) }
     }
     func stopAllStreams() {
         for serial in Array(streamingSerials) { stopStream(for: serial) }
@@ -349,6 +399,7 @@ final class StudioModel: ObservableObject {
         let visibleIDs = Set(visibleEvents.map(\.id))
         events.removeAll { visibleIDs.contains($0.id) }
         selectedEventID = nil
+        setActivity(.done, "🧹", "Đã xóa danh sách trong app", detail: "Log trên máy vẫn còn nguyên", clearAfter: 4)
     }
     func clearDeviceBufferAfterConfirmation() {
         guard let serial = selectedSerial else { return }
@@ -366,6 +417,7 @@ final class StudioModel: ObservableObject {
         let text = visibleEvents.map(\.copyText).joined(separator: "\n\n")
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+        setActivity(.done, "📋", "Đã copy \(visibleEvents.count) event", detail: "Dán được ngay (⌘V)", clearAfter: 4)
     }
     func exportVisibleEvents() {
         let panel = NSSavePanel()

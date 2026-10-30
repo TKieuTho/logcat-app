@@ -14,21 +14,34 @@ struct ContentView: View {
             Divider()
             controls
             Divider()
-            // Wide window: list and details side by side. Narrow: details drop below the list.
+            // Split view down to 640px wide (always there, placeholder until an event is picked).
+            // Below that the details are a drawer that slides over the list and stays closed until opened.
             GeometryReader { geo in
-                if geo.size.width >= 940 {
+                let wide = geo.size.width >= 640
+                let showPanel = wide ? model.detailVisible : model.drawerOpen
+                let panelW = wide ? min(420, max(250, geo.size.width * 0.38)) : min(420, geo.size.width * 0.92)
+                ZStack(alignment: .trailing) {
                     HStack(spacing: 0) {
-                        eventList.frame(minWidth: 480, maxWidth: .infinity)
-                        Divider()
-                        detailPanel.frame(width: min(420, max(340, geo.size.width * 0.36)))
+                        eventList.frame(maxWidth: .infinity)
+                        if wide && showPanel {
+                            Divider()
+                            detailPanel.frame(width: panelW)
+                                .overlay(alignment: .leading) { edgeHandle(open: false).offset(x: -14) }
+                                .transition(.move(edge: .trailing))
+                        }
                     }
-                } else {
-                    VStack(spacing: 0) {
-                        eventList.frame(maxHeight: .infinity)
-                        Divider()
-                        detailPanel.frame(height: min(280, max(180, geo.size.height * 0.4)))
+                    if !wide && showPanel {
+                        // Narrow window: the details take the whole area (list hidden) with a back button.
+                        detailPage
+                            .frame(width: geo.size.width, height: geo.size.height)
+                            .background(Theme.bg)
+                            .transition(.move(edge: .trailing))
                     }
+                    if !showPanel && (wide || model.selectedEvent != nil) { edgeHandle(open: true) }
                 }
+                .animation(.easeInOut(duration: 0.2), value: showPanel)
+                .onAppear { model.splitLayout = wide }
+                .onChange(of: wide) { model.splitLayout = $0 }
             }
             footer
         }
@@ -82,10 +95,12 @@ struct ContentView: View {
     }
 
     private var header: some View {
+        // (the pill animates in and out with the activity)
         ViewThatFits(in: .horizontal) {
             headerContent(wide: true)
             headerContent(wide: false)
         }
+        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: model.activity)
     }
 
     private func headerContent(wide: Bool) -> some View {
@@ -94,21 +109,27 @@ struct ContentView: View {
                 if let img = Bundle.main.image(forResource: "cat") ?? NSImage(contentsOfFile: "Resources/cat.png") {
                     Image(nsImage: img).resizable().scaledToFit()
                 } else { Image(systemName: "cat") }
-            }.frame(width: 44, height: 40)
+            }.frame(width: wide ? 44 : 32, height: wide ? 40 : 30)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Logcat").font(.title2.bold()) + Text("  v\(Updater.currentVersion)").font(.caption).foregroundColor(.secondary)
+                Text("Logcat").font(wide ? .title2.bold() : .title3.bold()) + Text("  v\(Updater.currentVersion)").font(.caption).foregroundColor(.secondary)
                 if wide { Text("Sun Studio · Firebase events (FA / FA-SVC)").font(.caption).foregroundStyle(.secondary) }
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
+            if let a = model.activity {
+                ActivityPill(activity: a, compact: !wide) { model.clearActivity() }
+                    .transition(.scale(scale: 0.9).combined(with: .opacity))
+            }
+            Spacer(minLength: 8)
             Picker("", selection: $appearance) {
                 Image(systemName: "circle.lefthalf.filled").tag("system")
                 Image(systemName: "sun.max").tag("light")
                 Image(systemName: "moon").tag("dark")
-            }.pickerStyle(.segmented).frame(width: 110).labelsHidden().help("Appearance: System / Light / Dark")
+            }.pickerStyle(.segmented).frame(width: 110).labelsHidden().help("Giao diện: theo hệ thống / sáng / tối")
             Circle().fill(model.isStreaming ? Theme.green : .gray).frame(width: 8, height: 8)
+                .help(model.isStreaming ? "Đang ghi log" : "Chưa ghi log")
             if wide { Text(model.isStreaming ? "LIVE" : "NOT STREAMING").font(.caption.bold()).foregroundStyle(.secondary) }
         }
-        .padding(wide ? 16 : 10)
+        .padding(wide ? 16 : 8)
     }
 
     private var deviceReady: Bool { model.selectedSerial != nil && model.selectedDevice?.state == "device" }
@@ -119,6 +140,7 @@ struct ContentView: View {
             fullBar.padding(14)
             mediumBar.padding(10)
             narrowBar.padding(10)
+            narrowestBar.padding(8)
         }
     }
 
@@ -129,11 +151,13 @@ struct ContentView: View {
                 Text((compact ? device.model.replacingOccurrences(of: "_", with: " ") : device.displayName) + (device.state == "unauthorized" ? " · UNAUTHORIZED" : "")).tag(device.serial)
             }
         }.labelsHidden().fixedSize().frame(minWidth: compact ? 150 : 290, alignment: .leading)
+        .help("Chọn thiết bị Android đang cắm USB (danh sách tự làm mới mỗi 3 giây)")
     }
     private func gamePicker(compact: Bool) -> some View {
         Picker("Game", selection: $model.selectedGame) {
             ForEach(GamePackage.allCases) { game in Text(game.title).tag(game) }
         }.labelsHidden().fixedSize().frame(minWidth: compact ? 140 : 190, alignment: .leading)
+        .help("Chọn game: dùng cho Configure & Capture và Restart Game")
     }
 
     private var streamLabelIcon: String { model.isStreaming ? "stop.fill" : "play.fill" }
@@ -149,18 +173,25 @@ struct ContentView: View {
                 .disabled(!deviceReady)
             Divider()
             Button("Thư mục lưu ảnh/video: \(model.captureDirectoryName)…", systemImage: "folder") { model.chooseCaptureDirectory() }
+                .help("Chọn thư mục lưu ảnh chụp và video quay màn hình")
             if model.usesCustomCaptureDirectory {
                 Button("Dùng lại thư mục Downloads", systemImage: "arrow.uturn.backward") { model.resetCaptureDirectory() }
             }
             Divider()
             Button("Clear View Only", systemImage: "eraser") { model.clearVisibleEvents() }
+                .help("Chỉ xóa danh sách trong app, không xóa log trên máy")
             Button("Clear Device Log Buffer…", systemImage: "trash", role: .destructive) { showDeviceBufferWarning = true }
+                .help("Xóa log trong bộ nhớ của điện thoại (adb logcat -c), có cảnh báo")
             Divider()
             Button("Copy Visible Logs", systemImage: "doc.on.doc") { model.copyVisibleEvents() }
+                .help("Copy các event đang hiển thị")
             Button("Export Visible Logs…", systemImage: "square.and.arrow.up") { model.exportVisibleEvents() }
+                .help("Xuất các event đang hiển thị ra file")
             Divider()
             Button("Check for Updates…", systemImage: "arrow.triangle.2.circlepath") { model.checkForUpdates(manual: true) }
+                .help("Kiểm tra bản mới; có bản mới thì bấm Cập nhật ngay để app tự thay")
         } label: { Image(systemName: "ellipsis.circle").font(.title3) }
+        .help("Thêm: thư mục lưu ảnh/video, xóa log trên máy, kiểm tra cập nhật…")
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().frame(height: 26)
     }
 
@@ -169,20 +200,22 @@ struct ContentView: View {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
             TextField(compact ? "Search" : "Search: event name, parameter or value (e.g. shop level 3)", text: $model.searchText)
                 .textFieldStyle(.plain)
+                .help("Tìm theo tên event, tên tham số hoặc giá trị. Nhập nhiều từ cách nhau bằng dấu cách: event phải chứa tất cả (ví dụ: shop level 3)")
             if !model.searchText.isEmpty {
                 Text("\(model.visibleEvents.count) found").font(.caption).foregroundStyle(.secondary)
                 Button { model.searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.borderless).foregroundStyle(.secondary)
             }
             Divider().frame(height: 18)
-            Toggle("Auto-scroll", isOn: $model.autoScroll).toggleStyle(.checkbox).font(.caption)
+            Toggle("Auto-scroll", isOn: $model.autoScroll).toggleStyle(.checkbox).font(.caption).help("Tự cuộn xuống event mới nhất khi có log mới")
         }
         .padding(compact ? 6 : 9).background(Theme.panel, in: RoundedRectangle(cornerRadius: 8))
     }
 
+    /// Wide window: one row; the two main actions keep their text, everything else is an icon with a tooltip.
     private var fullBar: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .bottom, spacing: 12) {
+            HStack(alignment: .bottom, spacing: 14) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("ANDROID DEVICE").font(.caption2.bold()).foregroundStyle(.secondary)
                     devicePicker(compact: false)
@@ -191,44 +224,66 @@ struct ContentView: View {
                     Text("GAME PACKAGE").font(.caption2.bold()).foregroundStyle(.secondary)
                     gamePicker(compact: false)
                 }
-                Button { model.requestSetup() } label: {
-                    Label("Configure & Capture", systemImage: "bolt.fill")
+                HStack(spacing: 8) {
+                    Button { model.requestSetup() } label: { Label("Configure & Capture", systemImage: "bolt.fill") }
+                        .buttonStyle(.borderedProminent).tint(Theme.accent)
+                        .help("Bật debug Firebase trên máy (setprop) rồi bắt đầu ghi log từ bây giờ. Không tự restart game.")
+                        .disabled(!deviceReady)
+                    Button { model.isStreaming ? model.stopAllStreams() : model.startAllStreams() } label: {
+                        Label(model.isStreaming ? "Stop All" : "Stream All", systemImage: streamLabelIcon)
+                    }
+                    .help(model.isStreaming ? "Dừng ghi log ở mọi thiết bị" : "Bắt đầu ghi log FA / FA-SVC từ mọi máy đang kết nối, từ lúc bấm")
+                    .disabled(!canStream)
+                    Divider().frame(height: 18)
+                    toolIcons
+                    Divider().frame(height: 18)
+                    logIcons
+                    moreMenu
                 }
-                .buttonStyle(.borderedProminent).tint(Theme.accent)
-                .disabled(!deviceReady)
-                Button { model.isStreaming ? model.stopAllStreams() : model.startAllStreams() } label: {
-                    Label(model.isStreaming ? "Stop All" : "Stream All Devices", systemImage: streamLabelIcon)
-                }.disabled(!canStream)
-                Button { model.takeScreenshot() } label: { Label("Chụp", systemImage: "camera") }
-                    .help("Chụp màn hình điện thoại, lưu vào \(model.captureDirectoryName)")
-                    .disabled(!deviceReady)
-                Button { model.toggleRecording() } label: {
-                    Label(model.isRecordingSelected ? "Dừng quay" : "Quay", systemImage: model.isRecordingSelected ? "stop.circle.fill" : "record.circle")
-                }
-                .tint(model.isRecordingSelected ? .red : nil)
-                .help("Quay màn hình điện thoại (tối đa 3 phút), lưu vào \(model.captureDirectoryName)")
-                .disabled(!deviceReady)
-                moreMenu
+                .frame(height: 26)
                 Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
             searchBar(compact: false)
+        }
+    }
+
+    private var primaryIcons: some View {
+        HStack(spacing: 8) {
+            iconButton("bolt.fill", help: "Configure & Capture: bật debug Firebase rồi ghi log từ bây giờ", tint: Theme.accent, enabled: deviceReady) { model.requestSetup() }
+            iconButton(streamLabelIcon, help: model.isStreaming ? "Stop All: dừng ghi log ở mọi thiết bị" : "Stream All: ghi log từ mọi máy đang kết nối, từ lúc bấm", enabled: canStream) {
+                model.isStreaming ? model.stopAllStreams() : model.startAllStreams()
+            }
+        }
+    }
+
+    private var toolIcons: some View {
+        HStack(spacing: 8) {
+            iconButton("camera", help: "Chụp màn hình → \(model.captureDirectoryName) (và copy vào clipboard)", enabled: deviceReady) { model.takeScreenshot() }
+            iconButton(model.isRecordingSelected ? "stop.circle.fill" : "record.circle",
+                       help: model.isRecordingSelected ? "Dừng quay và lưu video" : "Quay màn hình (tối đa 3 phút, không tiếng) → \(model.captureDirectoryName)",
+                       tint: model.isRecordingSelected ? .red : nil, enabled: deviceReady) { model.toggleRecording() }
+            iconButton("iphone.gen3", help: model.isMirroringSelected ? "Stop Mirroring" : "Mirror Screen: chiếu màn hình điện thoại lên Mac (scrcpy)",
+                       tint: model.isMirroringSelected ? Theme.green : nil, enabled: deviceReady && !model.isInstallingScrcpy) { model.toggleMirror() }
+            iconButton("bell.badge", help: "Notification Schedule: lịch thông báo game đã hẹn trên máy", enabled: deviceReady) { model.openNotificationSchedule() }
+            iconButton("arrow.clockwise", help: "Restart Game: force-stop và mở lại game để nhận debug mode (có xác nhận)", enabled: deviceReady) { model.showLaunchConfirmation = true }
+        }
+    }
+
+    private var logIcons: some View {
+        HStack(spacing: 8) {
+            iconButton("eraser", help: "Clear View: xóa danh sách trong app (⇧⌘K), không xóa log trên máy", enabled: true) { model.clearVisibleEvents() }
+            iconButton("doc.on.doc", help: "Copy Logs: copy các event đang hiển thị", enabled: true) { model.copyVisibleEvents() }
+            iconButton("square.and.arrow.up", help: "Export: xuất các event đang hiển thị ra file", enabled: true) { model.exportVisibleEvents() }
         }
     }
 
     private var actionIcons: some View {
         HStack(spacing: 8) {
-            iconButton("bolt.fill", help: "Configure & Capture", tint: Theme.accent, enabled: deviceReady) { model.requestSetup() }
-            iconButton(streamLabelIcon, help: model.isStreaming ? "Stop All" : "Stream All Devices", enabled: canStream) {
-                model.isStreaming ? model.stopAllStreams() : model.startAllStreams()
-            }
-            iconButton("camera", help: "Chụp màn hình → \(model.captureDirectoryName)", enabled: deviceReady) { model.takeScreenshot() }
-            iconButton(model.isRecordingSelected ? "stop.circle.fill" : "record.circle",
-                       help: model.isRecordingSelected ? "Dừng quay" : "Quay màn hình → \(model.captureDirectoryName)",
-                       tint: model.isRecordingSelected ? .red : nil, enabled: deviceReady) { model.toggleRecording() }
-            iconButton("iphone.gen3", help: model.isMirroringSelected ? "Stop Mirroring" : "Mirror Screen",
-                       tint: model.isMirroringSelected ? Theme.green : nil, enabled: deviceReady && !model.isInstallingScrcpy) { model.toggleMirror() }
-            iconButton("bell.badge", help: "Notification Schedule…", enabled: deviceReady) { model.openNotificationSchedule() }
+            primaryIcons
+            Divider().frame(height: 18)
+            toolIcons
+            Divider().frame(height: 18)
+            logIcons
         }
     }
 
@@ -260,6 +315,20 @@ struct ContentView: View {
         }
     }
 
+    /// Very narrow: pickers, icons and search each get their own row.
+    private var narrowestBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                devicePicker(compact: true)
+                gamePicker(compact: true)
+                Spacer(minLength: 0)
+                moreMenu
+            }
+            actionIcons
+            searchBar(compact: true)
+        }
+    }
+
     private func iconButton(_ symbol: String, help: String, tint: Color? = nil, enabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) { Image(systemName: symbol).font(.system(size: 14)).frame(width: 26, height: 22) }
             .buttonStyle(.bordered).controlSize(.small)
@@ -268,20 +337,33 @@ struct ContentView: View {
             .disabled(!enabled)
     }
 
-    private var eventList: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("EVENTS").font(.caption.bold()).foregroundStyle(.secondary)
+    private func listHeader(compact: Bool) -> some View {
+        HStack {
+                if !compact { Text("EVENTS").font(.caption.bold()).foregroundStyle(.secondary).lineLimit(1).fixedSize() }
                 Spacer()
                 Picker("", selection: $model.kindFilter) {
                     ForEach(KindFilter.allCases) { Text($0.rawValue).tag($0) }
-                }.pickerStyle(.segmented).labelsHidden().frame(width: 220)
+                }.pickerStyle(.segmented).labelsHidden().frame(width: 220).help("Lọc danh sách: tất cả, chỉ event, hoặc chỉ user property")
                 Picker("", selection: $model.detailedList) {
                     Image(systemName: "list.bullet").tag(false)
                     Image(systemName: "rectangle.grid.1x2").tag(true)
                 }.pickerStyle(.segmented).labelsHidden().frame(width: 70).help("Compact / Detailed view")
-                Text("\(model.visibleEvents.count) items").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                Text(compact ? "\(model.visibleEvents.count)" : "\(model.visibleEvents.count) items").font(.caption.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                Button { withAnimation(.easeInOut(duration: 0.2)) { model.toggleDetail() } } label: {
+                    Image(systemName: "sidebar.right").font(.system(size: 14))
+                        .foregroundStyle(model.detailShown ? Theme.accent : .secondary)
+                }
+                .buttonStyle(.borderless)
+                .help(model.detailShown ? "Thu gọn khung chi tiết" : "Mở khung chi tiết")
             }.padding(.horizontal, 14).padding(.vertical, 10)
+    }
+
+    private var eventList: some View {
+        VStack(spacing: 0) {
+            ViewThatFits(in: .horizontal) {
+                listHeader(compact: false)
+                listHeader(compact: true)
+            }
             Divider()
             ScrollViewReader { proxy in
                 // Custom rows instead of List selection: the system highlight is saturated blue and recolors the text.
@@ -302,7 +384,7 @@ struct ContentView: View {
                                 Divider().opacity(0.5)
                             }
                             .contentShape(Rectangle())
-                            .onTapGesture { model.selectedEventID = event.id }
+                            .onTapGesture { model.selectedEventID = event.id; model.openDetail() }
                             .id(event.id)
                         }
                     }
@@ -367,6 +449,39 @@ struct ContentView: View {
         NSPasteboard.general.setString(text, forType: .string)
     }
 
+    /// Same little tab to open (‹, window edge) and close (›, panel edge) the details.
+    private func edgeHandle(open: Bool) -> some View {
+        let shape = open
+            ? UnevenRoundedRectangle(topLeadingRadius: 6, bottomLeadingRadius: 6)
+            : UnevenRoundedRectangle(bottomTrailingRadius: 6, topTrailingRadius: 6)
+        return Button { withAnimation(.easeInOut(duration: 0.2)) { open ? model.openDetail() : model.closeDetail() } } label: {
+            Image(systemName: open ? "chevron.left" : "chevron.right").font(.system(size: 9, weight: .semibold))
+                .frame(width: 14, height: 34).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .background(Color.primary.opacity(0.06), in: shape)
+        .keyboardShortcut(open ? nil : .cancelAction)
+        .help(open ? "Mở khung chi tiết" : "Thu gọn khung chi tiết (Esc)")
+    }
+
+    private var detailPage: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button { withAnimation(.easeInOut(duration: 0.2)) { model.closeDetail() } } label: {
+                    Label("Danh sách", systemImage: "chevron.left").font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(.borderless).foregroundStyle(Theme.accent)
+                .keyboardShortcut(.cancelAction)
+                .help("Quay lại danh sách event (Esc)")
+                Spacer()
+            }
+            .padding(.horizontal, 14).padding(.vertical, 9)
+            Divider()
+            detailPanel
+        }
+    }
+
     private var detailPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let event = model.selectedEvent {
@@ -374,7 +489,7 @@ struct ContentView: View {
                     Text(event.name).font(.title3.bold()).textSelection(.enabled)
                     Spacer()
                     Button { copy(event.copyText) } label: { Label("Copy", systemImage: "doc.on.doc").font(.caption) }
-                        .buttonStyle(.bordered).controlSize(.small).help("Copy event name + all parameters")
+                        .buttonStyle(.bordered).controlSize(.small).help("Copy tên event và toàn bộ tham số")
                 }
                 Text("\(event.clock) · \(event.deviceSerial)").font(.caption.monospaced()).foregroundStyle(.secondary)
                 Divider()
@@ -383,7 +498,7 @@ struct ContentView: View {
                         ForEach(event.params, id: \.self) { p in
                             HStack(alignment: .top, spacing: 10) {
                                 Text(p.key).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
-                                    .frame(width: 130, alignment: .leading)
+                                    .frame(width: 162, alignment: .leading)
                                 Text(p.value).font(.system(size: 12, weight: .medium, design: .monospaced)).textSelection(.enabled)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
@@ -521,6 +636,64 @@ struct NotificationScheduleView: View {
     }
 }
 
+/// Cute status pill: what the app is doing right now, or what it just finished.
+struct ActivityPill: View {
+    let activity: Activity
+    var compact: Bool
+    var dismiss: () -> Void
+    @State private var pulse = false
+
+    private var tint: Color {
+        switch activity.kind {
+        case .working: return Theme.accent
+        case .done: return Theme.green
+        case .error: return .red
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 9) {
+            ZStack {
+                Circle().fill(tint.opacity(0.18)).frame(width: 28, height: 28)
+                if activity.kind == .working && activity.startedAt == nil {
+                    ProgressView().controlSize(.small).scaleEffect(0.7)
+                } else {
+                    Text(activity.emoji).font(.system(size: 15))
+                        .scaleEffect(activity.kind == .working && pulse ? 1.15 : 1)
+                }
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(activity.title).font(.system(size: 12, weight: .bold)).lineLimit(1)
+                    if let start = activity.startedAt {
+                        TimelineView(.periodic(from: start, by: 1)) { ctx in
+                            let s = max(0, Int(ctx.date.timeIntervalSince(start)))
+                            Text(String(format: "%d:%02d", s / 60, s % 60))
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced)).foregroundStyle(tint)
+                        }
+                    }
+                }
+                if !compact, let d = activity.detail {
+                    Text(d).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            if activity.fileURL != nil {
+                Image(systemName: "folder").font(.system(size: 11)).foregroundStyle(tint)
+            }
+        }
+        .padding(.leading, 8).padding(.trailing, 14).padding(.vertical, 6)
+        .background(tint.opacity(0.10), in: Capsule())
+        .overlay(Capsule().stroke(tint.opacity(0.30), lineWidth: 1))
+        .contentShape(Capsule())
+        .onTapGesture {
+            if let f = activity.fileURL { NSWorkspace.shared.activateFileViewerSelecting([f]) } else if activity.kind != .working { dismiss() }
+        }
+        .help(activity.fileURL != nil ? "Bấm để hiện file trong Finder" : (activity.detail ?? activity.title))
+        .onAppear { withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) { pulse = true } }
+        .animation(.spring(response: 0.35, dampingFraction: 0.7), value: activity.id)
+    }
+}
+
 /// Wraps children onto new lines when they run out of horizontal space.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 6
@@ -549,21 +722,45 @@ struct FlowLayout: Layout {
 
 /// Makes every scroll view in the window use thin overlay scrollbars.
 struct SlimScrollers: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { NSView() }
+    final class Coordinator {
+        var timer: Timer?
+        deinit { timer?.invalidate() }
+    }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        // Scroll views are created later too (e.g. when the details page opens), so keep checking.
+        context.coordinator.timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak v] _ in
+            Self.apply(v?.window?.contentView)
+        }
+        return v
+    }
     func updateNSView(_ view: NSView, context: Context) {
         DispatchQueue.main.async { Self.apply(view.window?.contentView) }
-        for delay in [0.3, 1.0] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { Self.apply(view.window?.contentView) }
-        }
     }
     private static func apply(_ root: NSView?) {
         guard let root else { return }
         if let sv = root as? NSScrollView {
             sv.scrollerStyle = .overlay
-            sv.verticalScroller?.controlSize = .mini
-            sv.horizontalScroller?.controlSize = .mini
+            if !(sv.verticalScroller is ThinScroller) { sv.verticalScroller = ThinScroller() }
+            if !(sv.horizontalScroller is ThinScroller) { sv.horizontalScroller = ThinScroller() }
         }
         root.subviews.forEach(apply)
+    }
+}
+
+/// Overlay scroller drawn as a thin rounded line instead of AppKit's fat knob.
+final class ThinScroller: NSScroller {
+    override class var isCompatibleWithOverlayScrollers: Bool { true }
+    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {}
+    override func drawKnob() {
+        let r = rect(for: .knob)
+        let thickness: CGFloat = 4
+        let knob: NSRect = bounds.height > bounds.width
+            ? NSRect(x: r.maxX - thickness - 3, y: r.minY + 2, width: thickness, height: max(8, r.height - 4))
+            : NSRect(x: r.minX + 2, y: r.maxY - thickness - 3, width: max(8, r.width - 4), height: thickness)
+        NSColor.secondaryLabelColor.withAlphaComponent(0.55).setFill()
+        NSBezierPath(roundedRect: knob, xRadius: thickness / 2, yRadius: thickness / 2).fill()
     }
 }
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.1 — 2026-10-30
+- **Thẻ trạng thái** ở phần đầu app: báo đang làm gì (đang chụp, đang quay kèm đồng hồ, đang cài scrcpy, đang tải bản cập nhật…) và đã xong gì (chụp/quay xong, file đã copy sẵn để dán ⌘V; bấm vào thẻ để mở file trong Finder), kèm thẻ lỗi khi thất bại. Tự biến mất sau vài giây.
+- **Thanh công cụ một hàng:** cửa sổ rộng hiện đủ mọi chức năng trên một hàng (Configure & Capture, Stream giữ chữ, còn lại là icon); cửa sổ nhỏ dần thì tự chuyển sang hai hoặc ba hàng, không bị cắt.
+- **Tooltip** cho mọi nút, ô chọn, ô search và từng mục menu: rê chuột vào là hiện chú thích ngắn.
+- **Khung chi tiết event:** từ 640px trở lên luôn nằm bên phải, chia đôi với danh sách; có tab nhỏ ‹ / › ở mép để mở và thu gọn (Esc cũng thu được), cộng nút ở đầu danh sách. Cửa sổ nhỏ hơn 640px: bấm event thì chi tiết hiện thành một trang riêng với nút "‹ Danh sách" để quay lại, không còn đè nửa danh sách.
+- Thanh cuộn mảnh hơn (tự vẽ, ~4px); đầu danh sách tự gọn khi hẹp; cột tên tham số rộng hơn để không bị ngắt dòng.
+
 ## 0.6.0 — 2026-10-29
 - **Notification Schedule…** (menu ⋯): xem lịch thông báo local game đã hẹn trên máy (giờ nổ, đếm ngược, chính xác/trong khoảng, một lần/lặp), đọc từ AlarmManager qua `dumpsys alarm`. Chỉ xem được lịch, không xem được nội dung thông báo.
 - **Mirror Screen**: chiếu màn hình điện thoại lên Mac bằng scrcpy. Máy chưa có scrcpy thì app đề nghị cài tự động qua Homebrew (có xác nhận), hoặc mở hướng dẫn nếu chưa có Homebrew.

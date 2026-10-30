@@ -11,7 +11,7 @@ App macOS (SwiftUI, macOS 13+, Apple Silicon) giúp QA xem **event** và **user 
 | Log | Event và User Property | Ghi nhận cả event và `Setting user property`; lọc All / Events / User Props | Tab ở đầu danh sách |
 | Log | Giờ gửi | Hiển thị `HH:mm:ss.SSS` lấy từ logcat; giữ event gửi lặp, chỉ gộp bản sao giữa các kiểu log | Mỗi dòng/thẻ event |
 | Log | Hai chế độ xem | Detailed (thẻ, tham số dạng chip) và Compact (một dòng) | Nút cạnh tab lọc |
-| Log | Chi tiết event | Bảng key/value của tham số, log gốc (Raw log) | Bấm vào event |
+| Log | Chi tiết event | Bảng key/value của tham số, log gốc (Raw log). Cửa sổ rộng: khung bên phải, thu gọn bằng tab ‹ › (Esc); cửa sổ nhỏ: trang riêng có nút "‹ Danh sách" | Bấm vào event |
 | Log | Search | Nhiều từ (AND) trên tên event, tên và giá trị param | Ô Search |
 | Log | Copy / Export | Copy từng event; copy hoặc export các event đang hiển thị | Nút Copy, menu ⋯ |
 | Log | Cảnh báo | Báo khi có dòng log event/property chưa đọc được | Thanh dưới cùng |
@@ -21,7 +21,9 @@ App macOS (SwiftUI, macOS 13+, Apple Silicon) giúp QA xem **event** và **user 
 | Thiết bị | Notification Schedule | Lịch thông báo local game đã hẹn: giờ nổ, đếm ngược, kiểu hẹn, chu kỳ lặp (không có nội dung) | Menu ⋯ |
 | Thiết bị | Mirror Screen | Chiếu màn hình điện thoại lên Mac bằng scrcpy; tự cài qua Homebrew nếu chưa có | Menu ⋯ |
 | Thiết bị | Chụp / Quay màn hình | Lưu PNG / MP4 (tối đa 3 phút, không có tiếng), copy vào clipboard; chọn thư mục lưu | Nút Chụp, Quay; menu ⋯ |
-| App | Giao diện | Hệ thống / Sáng / Tối; tự co theo cỡ cửa sổ | Góc phải trên |
+| App | Giao diện | Hệ thống / Sáng / Tối; tự co theo cỡ cửa sổ (một hàng công cụ khi rộng, nhiều hàng khi hẹp) | Góc phải trên |
+| App | Thẻ trạng thái | Báo đang làm gì và đã xong gì (chụp/quay xong, file đã copy, cài đặt, cập nhật), bấm để mở file trong Finder | Giữa phần đầu app |
+| App | Tooltip | Rê chuột vào nút, ô chọn, ô search hay mục menu để xem chú thích ngắn | Mọi nơi |
 | App | Tự cập nhật | Kiểm tra bản mới khi mở app; bấm "Cập nhật ngay" để tự tải, thay bản và mở lại | Menu ⋯ → Check for Updates… |
 
 ## Dùng
