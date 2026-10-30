@@ -1,6 +1,6 @@
 {
-  "version": "0.6.6",
+  "version": "0.6.7",
   "date": "2026-10-30",
-  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.6.6/Logcat-0.6.6-macOS-arm64.zip",
-  "notes": "Start/Dừng theo từng máy, header ghi rõ máy và game đang log, tự bật sáng màn hình khi chụp/quay, sửa quay màn hình bị treo."
+  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.6.7/Logcat-0.6.7-macOS-arm64.zip",
+  "notes": "Dừng được bất kỳ máy nào từ header, lịch thông báo tính theo đồng hồ điện thoại."
 }
