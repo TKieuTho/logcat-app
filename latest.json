@@ -1,6 +1,6 @@
 {
-  "version": "0.6.5",
+  "version": "0.6.6",
   "date": "2026-10-30",
-  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.6.5/Logcat-0.6.5-macOS-arm64.zip",
-  "notes": "Sửa Raw log, kiểm tra video quay rỗng, hộp thoại tiếng Việt."
+  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.6.6/Logcat-0.6.6-macOS-arm64.zip",
+  "notes": "Start/Dừng theo từng máy, header ghi rõ máy và game đang log, tự bật sáng màn hình khi chụp/quay, sửa quay màn hình bị treo."
 }
