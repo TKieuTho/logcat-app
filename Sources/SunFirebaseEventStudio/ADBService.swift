@@ -130,7 +130,7 @@ final class ADBService: ObservableObject {
         _ = try await run(["-s", serial, "shell", "log", "-t", Self.markerTag, "-p", "i", token])
     }
 
-    func startLogcat(serial: String, onLine: @escaping @Sendable (String) -> Void) throws -> Process {
+    func startLogcat(serial: String, onLine: @escaping @Sendable (String) -> Void, onExit: @escaping @Sendable () -> Void) throws -> Process {
         guard let adbPath else { throw NSError(domain: "ADB", code: 1, userInfo: [NSLocalizedDescriptionKey: "ADB is not ready yet."]) }
         let p = Process()
         let pipe = Pipe()
@@ -138,6 +138,7 @@ final class ADBService: ObservableObject {
         p.arguments = ["-s", serial, "logcat", "-v", "time", "-s", "FA", "FA-SVC", "\(Self.markerTag):I"]
         p.standardOutput = pipe
         p.standardError = pipe
+        p.terminationHandler = { _ in onExit() }
         // A read can end mid-line; keep the tail until its newline arrives so no event is split or lost.
         let pending = LineBuffer()
         pipe.fileHandleForReading.readabilityHandler = { handle in

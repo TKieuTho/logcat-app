@@ -3,6 +3,45 @@ import SwiftUI
 import Combine
 import AppKit
 
+/// A log line that already went through filtering and parsing off the main thread.
+enum Prepared {
+    case event(raw: String, name: String, params: [EventParam], kind: LogKind, date: Date, tag: String)
+    case unreadable(raw: String)
+    case snapshot(app: String, props: [UserPropertyState])
+}
+
+/// Drops the history dump that logcat replays on start: nothing passes until our own marker line shows up.
+final class StreamGate: @unchecked Sendable {
+    private let token: String
+    private var isOpen = false
+    private let lock = NSLock()
+    init(token: String) { self.token = token }
+    func pass(_ line: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if isOpen { return true }
+        if line.contains(token) { isOpen = true }
+        return false
+    }
+    func openNow() { lock.lock(); isOpen = true; lock.unlock() }
+    var opened: Bool { lock.lock(); defer { lock.unlock() }; return isOpen }
+}
+
+/// Newest upload dump per app seen in the replayed history, kept so the properties table is not empty at Start.
+final class HistorySnapshots: @unchecked Sendable {
+    var latest: [String: [UserPropertyState]] = [:]
+}
+
+/// Lines are parsed on the reader thread and queued here in arrival order; the main actor drains it in batches.
+final class IngestQueue: @unchecked Sendable {
+    private var items: [(serial: String, item: Prepared)] = []
+    private let lock = NSLock()
+    func push(_ serial: String, _ item: Prepared) { lock.lock(); items.append((serial, item)); lock.unlock() }
+    func drain() -> [(serial: String, item: Prepared)] {
+        lock.lock(); defer { lock.unlock() }
+        let out = items; items.removeAll(keepingCapacity: true); return out
+    }
+}
+
 /// What the app is doing / just finished, shown as a small pill in the header.
 struct Activity: Identifiable, Equatable {
     enum Kind { case working, done, error }
@@ -28,6 +67,10 @@ final class StudioModel: ObservableObject {
     @Published var showLaunchConfirmation = false
     @Published var errorMessage: String?
     @Published var selectedEventID: UUID?
+    /// Latest full user-property list per "serial|app", read from the SDK's upload dumps.
+    @Published var propertySnapshots: [String: PropertySnapshot] = [:]
+    /// Last value per property from live "Setting user property" lines (used when the SDK prints no upload dump).
+    @Published var liveProperties: [String: [String: UserPropertyState]] = [:]
     @Published var activity: Activity?
     private var activityTask: Task<Void, Never>?
     @Published var detailVisible = true      // split layout (wide window)
@@ -62,12 +105,23 @@ final class StudioModel: ObservableObject {
     private let adb = ADBService()
     private var streamProcesses: [String: Process] = [:]
     private var streamingSerials = Set<String>()
-    /// Per serial: marker token sent at Start; nil once the marker came back and live events may flow.
-    private var pendingMarkers: [String: String] = [:]
+    /// Streams the user asked for; if one dies (unplug, adb restart) it is reconnected when the device is back.
+    private var wantedSerials = Set<String>()
+    private var streamAllMode = false
+    private var manuallyStopped = Set<String>()
+    private var streamGen: [String: UUID] = [:]
+    private let ingestQueue = IngestQueue()
     private var serviceObservation: Any?
 
     init() {
-        adb.$devices.receive(on: RunLoop.main).sink { [weak self] in self?.devices = $0 }.store(in: &cancellables)
+        Task { @MainActor [weak self] in
+            while let self { self.drainIngestQueue(); try? await Task.sleep(for: .milliseconds(100)) }
+        }
+        Self.killStaleLogcat()
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.terminateChildren() }
+        }
+        adb.$devices.receive(on: RunLoop.main).sink { [weak self] in self?.devices = $0; self?.reconnectStreams() }.store(in: &cancellables)
         adb.$status.receive(on: RunLoop.main).sink { [weak self] in self?.statusText = $0 }.store(in: &cancellables)
     }
     private var cancellables = Set<AnyCancellable>()
@@ -101,6 +155,25 @@ final class StudioModel: ObservableObject {
         }
     }
     func clearActivity() { activityTask?.cancel(); activity = nil }
+
+    /// The list for the selected device and game (falls back to the device's most recent one).
+    var currentPropertySnapshot: (app: String, snapshot: PropertySnapshot)? {
+        let wanted = selectedGame.rawValue
+        let candidates = propertySnapshots.compactMap { (k, v) -> (String, String, PropertySnapshot)? in
+            let parts = k.split(separator: "|", maxSplits: 1).map(String.init)
+            guard parts.count == 2, selectedSerial == nil || parts[0] == selectedSerial else { return nil }
+            return (parts[0], parts[1], v)
+        }
+        if let hit = candidates.first(where: { $0.1 == wanted }) { return (hit.1, hit.2) }
+        if let latest = candidates.max(by: { $0.2.updatedAt < $1.2.updatedAt }) { return (latest.1, latest.2) }
+        // No SDK dump: rebuild from the property-set lines seen since Start (cannot tell which app, so label it as such).
+        let serial = selectedSerial ?? liveProperties.keys.first
+        if let serial, let table = liveProperties[serial], !table.isEmpty {
+            let props = table.values.sorted { $0.setAt < $1.setAt }
+            return ("Tổng hợp từ các dòng “Setting user property” (máy chưa in bản kê của SDK)", PropertySnapshot(props: props, updatedAt: props.map(\.setAt).max() ?? Date()))
+        }
+        return nil
+    }
 
     func openDetail() { detailVisible = true; drawerOpen = true }
     func closeDetail() { if splitLayout { detailVisible = false } else { drawerOpen = false } }
@@ -348,47 +421,126 @@ final class StudioModel: ObservableObject {
         startStream(for: serial)
     }
     func startAllStreams() {
+        streamAllMode = true
+        manuallyStopped.removeAll()
         for device in devices where device.state == "device" {
             startStream(for: device.serial)
         }
     }
-    func startStream(for serial: String) {
+    func startStream(for serial: String, auto: Bool = false) {
         guard !streamingSerials.contains(serial) else { return }
+        if !auto { manuallyStopped.remove(serial) }
+        wantedSerials.insert(serial)
+        let gen = UUID()
         do {
-            let p = try adb.startLogcat(serial: serial) { [weak self] line in
-                Task { @MainActor in self?.ingest(line, serial: serial) }
-            }
             let token = "START_\(UUID().uuidString)"
-            pendingMarkers[serial] = token
+            let gate = StreamGate(token: token)
+            let queue = ingestQueue
+            let dump = UploadDumpParser()
+            let history = HistorySnapshots()
+            let p = try adb.startLogcat(serial: serial, onLine: { line in
+                let wasOpen = gate.opened
+                let snap = dump.feed(line)
+                guard gate.pass(line) else {
+                    // Replayed history: events stay hidden, but remember the latest property list per app.
+                    if !wasOpen, let snap { history.latest[snap.app] = snap.props }
+                    if !wasOpen, gate.opened {
+                        for (app, props) in history.latest { queue.push(serial, .snapshot(app: app, props: props)) }
+                        history.latest = [:]
+                    }
+                    return
+                }
+                if let snap { queue.push(serial, .snapshot(app: snap.app, props: snap.props)) }
+                if let item = StudioModel.prepare(line) { queue.push(serial, item) }
+            }, onExit: { [weak self] in
+                Task { @MainActor in self?.streamEnded(serial, gen: gen) }
+            })
+            streamGen[serial] = gen
             streamProcesses[serial] = p
             streamingSerials.insert(serial)
             Task {
                 do { try await adb.sendStartMarker(serial: serial, token: token) }
-                catch { pendingMarkers[serial] = nil }
+                catch { gate.openNow() }
+                // If the marker never comes back, stop waiting: only the replayed history before it is lost.
                 try? await Task.sleep(for: .seconds(8))
-                if pendingMarkers[serial] == token { pendingMarkers[serial] = nil }
+                gate.openNow()
             }
             isStreaming = !streamingSerials.isEmpty
             statusText = "Streaming FA / FA-SVC from \(streamingSerials.count) device(s)"
-            setActivity(.done, "🐾", "Đang ghi log", detail: "\(streamingSerials.count) máy · chỉ hiện log từ lúc này", clearAfter: 5)
+            if auto {
+                setActivity(.done, "🔄", "Đã nối lại \(deviceName(serial))", detail: "Ghi log tiếp từ lúc này", clearAfter: 6)
+            } else {
+                setActivity(.done, "🐾", "Đang ghi log", detail: "\(streamingSerials.count) máy · chỉ hiện log từ lúc này", clearAfter: 5)
+            }
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    /// Children are not killed when the app exits, so stop them ourselves (otherwise `adb logcat` / scrcpy pile up).
+    private func terminateChildren() {
+        for p in streamProcesses.values { p.terminationHandler = nil; p.terminate() }
+        for p in mirrorProcesses.values { p.terminate() }
+    }
+
+    /// Cleans up `adb logcat` streams left behind by a previous run that crashed or was killed (they are re-parented to launchd).
+    private static func killStaleLogcat() {
+        let ps = Process()
+        let out = Pipe()
+        ps.executableURL = URL(fileURLWithPath: "/bin/ps")
+        ps.arguments = ["-axo", "pid=,ppid=,command="]
+        ps.standardOutput = out
+        guard (try? ps.run()) != nil else { return }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        ps.waitUntilExit()
+        for line in (String(data: data, encoding: .utf8) ?? "").split(separator: "\n") {
+            let parts = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+            guard parts.count == 3, parts[1] == "1", parts[2].contains(" logcat -v time -s FA FA-SVC \(ADBService.markerTag):I"),
+                  let pid = Int32(parts[0]) else { continue }
+            kill(pid, SIGTERM)
+        }
+    }
+
+    private func deviceName(_ serial: String) -> String {
+        let model = devices.first { $0.serial == serial }?.model.replacingOccurrences(of: "_", with: " ") ?? ""
+        return model.isEmpty ? serial : model
+    }
+
+    /// The adb logcat process ended on its own (device unplugged, adb restarted…); ignore ends we caused ourselves.
+    private func streamEnded(_ serial: String, gen: UUID) {
+        guard streamGen[serial] == gen else { return }
+        streamGen[serial] = nil
+        streamProcesses[serial] = nil
+        streamingSerials.remove(serial)
+        isStreaming = !streamingSerials.isEmpty
+        statusText = "Mất kết nối \(deviceName(serial)); sẽ tự nối lại khi máy trở lại"
+        setActivity(.error, "🔌", "Mất kết nối \(deviceName(serial))", detail: "Tự nối lại khi máy trở lại", clearAfter: 10)
+    }
+
+    /// Runs on every device refresh (3 s): restart wanted streams that died, and pick up new devices in "Stream All" mode.
+    private func reconnectStreams() {
+        for d in devices where d.state == "device" && !streamingSerials.contains(d.serial) && !manuallyStopped.contains(d.serial)
+            && (wantedSerials.contains(d.serial) || streamAllMode) {
+            startStream(for: d.serial, auto: true)
+        }
     }
     func stopStream() {
         guard let serial = selectedSerial else { return }
         stopStream(for: serial)
     }
     func stopStream(for serial: String) {
+        streamGen[serial] = nil
+        wantedSerials.remove(serial)
+        manuallyStopped.insert(serial)
         if let process = streamProcesses[serial] {
             process.terminate()
             streamProcesses.removeValue(forKey: serial)
         }
         streamingSerials.remove(serial)
-        pendingMarkers[serial] = nil
         isStreaming = !streamingSerials.isEmpty
         statusText = isStreaming ? "Streaming FA / FA-SVC from \(streamingSerials.count) device(s)" : "Not streaming"
         if !isStreaming { setActivity(.done, "💤", "Đã dừng ghi log", clearAfter: 4) }
     }
     func stopAllStreams() {
+        streamAllMode = false
         for serial in Array(streamingSerials) { stopStream(for: serial) }
     }
     func selectDevice(_ serial: String?) {
@@ -431,45 +583,66 @@ final class StudioModel: ObservableObject {
     private static func sourceKey(_ line: String) -> String {
         line.contains("Event recorded") ? "recorded" : line.contains("(FE)") ? "fe" : "plain"
     }
-    private func ingest(_ line: String, serial: String) {
-        if let token = pendingMarkers[serial] {
-            if line.contains(token) { pendingMarkers[serial] = nil }
-            return
-        }
-        if line.contains(ADBService.markerTag) { return }
+    /// Runs on the reader thread: cheap filter first, then parse.
+    nonisolated static func prepare(_ line: String) -> Prepared? {
+        guard LogEvent.looksRelevant(line) else { return nil }
         guard let parsed = LogEvent.parse(raw: line) else {
             let l = line.lowercased()
-            if l.contains("logging event") || l.contains("setting user property") || l.contains("event recorded") {
-                skippedLines += 1
-                lastSkippedLine = line
-            }
-            return
+            return (l.contains("logging event") || l.contains("setting user property") || l.contains("event recorded")) ? .unreadable(raw: line) : nil
         }
-        // The "too many properties" warning repeats on every upload cycle; once per property is enough.
-        if parsed.params.contains(where: { $0.key == "status" }),
-           events.suffix(400).contains(where: { $0.deviceSerial == serial && $0.kind == .userProperty && $0.name == parsed.name &&
-               $0.params.contains(where: { $0.key == "status" }) }) { return }
-        let date = Self.parseDate(line) ?? Date()
-        // FA logs one event in several flavours (Logging event / Event recorded); drop only those cross-flavour copies.
-        // Identical repeats in the same flavour are genuine separate sends and are kept.
-        let key = Self.sourceKey(line)
-        let sig = Set(parsed.params.filter { !$0.isInternal }.map { "\($0.key)=\($0.value)" })
-        if events.suffix(40).contains(where: { $0.deviceSerial == serial && $0.kind == parsed.kind && $0.name == parsed.name &&
-            Self.sourceKey($0.raw) != key && abs($0.date.timeIntervalSince(date)) < 1 &&
-            Set($0.params.filter { !$0.isInternal }.map { "\($0.key)=\($0.value)" }) == sig }) { return }
-        let tag = line.contains("FA-SVC") ? "FA-SVC" : "FA"
-        events.append(LogEvent(date: date, deviceSerial: serial, tag: tag, raw: line, name: parsed.name, params: parsed.params, kind: parsed.kind))
-        if events.count > 50000 { events.removeFirst(events.count - 50000) }
+        return .event(raw: line, name: parsed.name, params: parsed.params, kind: parsed.kind,
+                      date: parseDate(line) ?? Date(), tag: line.contains("FA-SVC") ? "FA-SVC" : "FA")
     }
-    private static func parseDate(_ line: String) -> Date? {
+
+    private func drainIngestQueue() {
+        for (serial, item) in ingestQueue.drain() { ingest(item, serial: serial) }
+    }
+
+    private func ingest(_ item: Prepared, serial: String) {
+        switch item {
+        case .unreadable(let raw):
+            skippedLines += 1
+            lastSkippedLine = raw
+        case .snapshot(let app, var props):
+            let key = "\(serial)|\(app)"
+            let prev = Dictionary((propertySnapshots[key]?.props ?? []).map { ($0.rawName, $0) }, uniquingKeysWith: { a, _ in a })
+            let first = propertySnapshots[key] == nil
+            for i in props.indices {
+                if let old = prev[props[i].rawName] {
+                    props[i].changedAt = (old.value != props[i].value || old.setAt != props[i].setAt) ? Date() : old.changedAt
+                } else if !first { props[i].changedAt = Date() }
+            }
+            propertySnapshots[key] = PropertySnapshot(props: props, updatedAt: Date())
+        case .event(let raw, let name, let params, let kind, let date, let tag):
+            if kind == .userProperty, !params.contains(where: { $0.key == "status" }), let value = params.first?.value {
+                var table = liveProperties[serial] ?? [:]
+                let changed = table[name].map { $0.value != value } ?? !table.isEmpty
+                table[name] = UserPropertyState(rawName: name, value: value, setAt: date, changedAt: changed ? Date() : table[name]?.changedAt)
+                liveProperties[serial] = table
+            }
+            // The "too many properties" warning repeats on every upload cycle; once per property is enough.
+            if params.contains(where: { $0.key == "status" }),
+               events.suffix(400).contains(where: { $0.deviceSerial == serial && $0.kind == .userProperty && $0.name == name &&
+                   $0.params.contains(where: { $0.key == "status" }) }) { return }
+            // FA logs one event in several flavours (Logging event / Event recorded); drop only those cross-flavour copies.
+            // Identical repeats in the same flavour are genuine separate sends and are kept.
+            let key = Self.sourceKey(raw)
+            let sig = Set(params.filter { !$0.isInternal }.map { "\($0.key)=\($0.value)" })
+            if events.suffix(40).contains(where: { $0.deviceSerial == serial && $0.kind == kind && $0.name == name &&
+                Self.sourceKey($0.raw) != key && abs($0.date.timeIntervalSince(date)) < 1 &&
+                Set($0.params.filter { !$0.isInternal }.map { "\($0.key)=\($0.value)" }) == sig }) { return }
+            events.append(LogEvent(date: date, deviceSerial: serial, tag: tag, raw: raw, name: name, params: params, kind: kind))
+            if events.count > 50000 { events.removeFirst(events.count - 50000) }
+        }
+    }
+    nonisolated private static let dateRE = try! NSRegularExpression(pattern: #"^(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})\.(\d{3})"#)
+    nonisolated private static func parseDate(_ line: String) -> Date? {
         // logcat -v time: MM-DD HH:mm:ss.SSS
-        let pattern = #"^(\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d{3})"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
-              let r1 = Range(match.range(at: 1), in: line),
-              let r2 = Range(match.range(at: 2), in: line) else { return nil }
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
-        return f.date(from: "\(Calendar.current.component(.year, from: Date()))-\(line[r1]) \(line[r2])")
+        guard let mt = dateRE.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) else { return nil }
+        func n(_ i: Int) -> Int? { Range(mt.range(at: i), in: line).flatMap { Int(line[$0]) } }
+        guard let mo = n(1), let d = n(2), let h = n(3), let mi = n(4), let s = n(5), let ms = n(6) else { return nil }
+        var c = DateComponents()
+        c.year = Calendar.current.component(.year, from: Date()); c.month = mo; c.day = d; c.hour = h; c.minute = mi; c.second = s
+        return Calendar.current.date(from: c).map { $0.addingTimeInterval(Double(ms) / 1000) }
     }
 }

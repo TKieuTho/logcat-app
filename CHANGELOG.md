@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.3 — 2026-10-30
+- **Bảng "Thuộc tính hiện tại"** ở tab User Props: danh sách đầy đủ user property mà SDK đang giữ (tên, giá trị, thời điểm đặt), đọc từ bản kê SDK in ra mỗi lần upload. Property mới hoặc vừa đổi có chấm xanh; thuộc tính nội bộ bị làm mờ. Bảng được ghim cố định ở trên, chỉ phần "Lịch sử đặt" bên dưới cuộn; có nút mở rộng và thu gọn (nhớ trạng thái).
+- Bảng được nạp ngay lúc bấm bắt đầu từ bản kê gần nhất trong log máy; nếu máy không in bản kê thì tổng hợp từ các dòng "Setting user property" live. Event vẫn chỉ hiện từ lúc bấm.
+- **Tự nối lại khi mất luồng log** (rút cáp, adb khởi động lại): app hiện thẻ "Mất kết nối", tự nối lại khi máy trở lại, và nhận máy mới cắm thêm khi đang ở chế độ Stream All. Trước đây app vẫn báo LIVE nhưng không còn ghi gì.
+- **Log realtime ổn định hơn:** lọc và đọc dòng log ở luồng nền, giữ đúng thứ tự, bỏ nhanh phần lịch sử logcat dội về lúc bắt đầu. Đo trên máy thật: 600/600 event giả đủ và đúng thứ tự, độ trễ trung vị 5 ms, tối đa 113 ms, kể cả khi đang chụp và quay màn hình.
+- Fix: không còn để lại tiến trình `adb logcat` / scrcpy mồ côi khi thoát app; dọn tiến trình mồ côi của lần chạy trước khi mở lại.
+
 ## 0.6.2 — 2026-10-30
 - Fix: sót user property. Đọc được dòng có mã rút gọn trong tên (`non_personalized_ads(_npa)`, `user_id(_id)`, `ga_session_id(_sid)`…) và dạng `Setting user property(FE):`. Kiểm trên log thật (~510.000 dòng, 2 máy): thêm 568 property được ghi nhận, 0 dòng còn bị bỏ sót; số event không đổi (đủ).
 - Hiển thị cảnh báo của SDK "Too many unique user properties are set" (quá 25 loại property): property bị Firebase bỏ qua hiện kèm chip đỏ "Bị SDK bỏ qua", mỗi property chỉ một lần.

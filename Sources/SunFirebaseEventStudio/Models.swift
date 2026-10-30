@@ -60,29 +60,36 @@ struct LogEvent: Identifiable, Hashable {
         return ([name] + params.map { "\($0.key) = \($0.value)" }).joined(separator: "\n")
     }
 
+    private static let propertyRE = try! NSRegularExpression(pattern: #"(?:Setting|Making) user property\s*(?:\(FE\))?: ([A-Za-z0-9_]+)(?:\([^)]*\))?, ?(.*)$"#)
+    private static let ignoredPropertyRE = try! NSRegularExpression(pattern: #"Too many unique user properties are set\. Ignoring user property: ([A-Za-z0-9_]+)(?:\([^)]*\))?, ?(.*)$"#)
+    private static let eventREs: [NSRegularExpression] = [
+        #"Logging event(?: \(FE\))?: origin=[^,]*,name=([A-Za-z0-9_]+)(?:\([^)]*\))?,\s*params=(.*)$"#,
+        #"Logging event(?: \(FE\))?: ([A-Za-z0-9_]+)(?:\([^)]*\))?, (.*)$"#,
+        #"Event recorded: Event\{appId='[^']*', name='([^']+)', params=(.*)$"#,
+    ].map { try! NSRegularExpression(pattern: $0) }
+    private static let keyRE = try! NSRegularExpression(pattern: #"(?:^|, )([A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?)="#)
+
+    /// FA writes ~100 unrelated lines per event; this cheap check keeps them away from the regexes.
+    static func looksRelevant(_ raw: String) -> Bool {
+        raw.contains("Logging event") || raw.contains("Event recorded") || raw.contains("user property")
+    }
+
     /// Returns nil for log lines that are not an event (noise from FA / FA-SVC).
     static func parse(raw: String) -> (name: String, params: [EventParam], kind: LogKind)? {
-        // "Setting user property: level, 12", "Setting user property(FE): non_personalized_ads(_npa), 0"
-        if let re = try? NSRegularExpression(pattern: #"(?:Setting|Making) user property\s*(?:\(FE\))?: ([A-Za-z0-9_]+)(?:\([^)]*\))?, ?(.*)$"#),
-           let mt = re.firstMatch(in: raw, range: NSRange(raw.startIndex..., in: raw)),
+        guard looksRelevant(raw) else { return nil }
+        let whole = NSRange(raw.startIndex..., in: raw)
+        if let mt = propertyRE.firstMatch(in: raw, range: whole),
            let r1 = Range(mt.range(at: 1), in: raw), let r2 = Range(mt.range(at: 2), in: raw) {
             return (String(raw[r1]), [EventParam(key: "value", value: String(raw[r2]))], .userProperty)
         }
         // The SDK drops properties beyond its limit of 25 distinct names; QA needs to see which ones.
-        if let re = try? NSRegularExpression(pattern: #"Too many unique user properties are set\. Ignoring user property: ([A-Za-z0-9_]+)(?:\([^)]*\))?, ?(.*)$"#),
-           let mt = re.firstMatch(in: raw, range: NSRange(raw.startIndex..., in: raw)),
+        if let mt = ignoredPropertyRE.firstMatch(in: raw, range: whole),
            let r1 = Range(mt.range(at: 1), in: raw), let r2 = Range(mt.range(at: 2), in: raw) {
             return (String(raw[r1]), [EventParam(key: "value", value: String(raw[r2])),
                                       EventParam(key: "status", value: "Bị SDK bỏ qua: quá 25 property")], .userProperty)
         }
-        let patterns = [
-            #"Logging event(?: \(FE\))?: origin=[^,]*,name=([A-Za-z0-9_]+)(?:\([^)]*\))?,\s*params=(.*)$"#,
-            #"Logging event(?: \(FE\))?: ([A-Za-z0-9_]+)(?:\([^)]*\))?, (.*)$"#,
-            #"Event recorded: Event\{appId='[^']*', name='([^']+)', params=(.*)$"#,
-        ]
-        for p in patterns {
-            guard let re = try? NSRegularExpression(pattern: p),
-                  let mt = re.firstMatch(in: raw, range: NSRange(raw.startIndex..., in: raw)),
+        for re in eventREs {
+            guard let mt = re.firstMatch(in: raw, range: whole),
                   let r1 = Range(mt.range(at: 1), in: raw), let r2 = Range(mt.range(at: 2), in: raw) else { continue }
             return (String(raw[r1]), parseParams(String(raw[r2])), .event)
         }
@@ -95,7 +102,6 @@ struct LogEvent: Identifiable, Hashable {
         // "Event recorded" ends with "}]}" (Bundle + Event), the other flavours with "}]" or "}".
         if let suffix = ["}]}", "}]", "}"].first(where: { body.hasSuffix($0) }) { body.removeLast(suffix.count) }
         else if let close = body.lastIndex(of: "}") { body = String(body[..<close]) }
-        guard let keyRE = try? NSRegularExpression(pattern: #"(?:^|, )([A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?)="#) else { return [] }
         let ns = body as NSString
         let matches = keyRE.matches(in: body, range: NSRange(location: 0, length: ns.length))
         var out: [EventParam] = []
@@ -214,5 +220,77 @@ enum AlarmParser {
                           case "s": total += v; case "ms": total += v / 1000; default: break }
         }
         return sign * total
+    }
+}
+
+
+/// One user property as listed in the SDK's upload dump (the same list Firebase itself sends).
+struct UserPropertyState: Identifiable, Hashable {
+    var id: String { rawName }
+    let rawName: String          // e.g. "non_personalized_ads(_npa)"
+    let value: String
+    let setAt: Date
+    var changedAt: Date?         // when this app last saw it appear or change
+    var name: String { rawName.replacingOccurrences(of: #"\(_[^)]*\)$"#, with: "", options: .regularExpression) }
+    /// Reserved/engagement properties the SDK manages itself; shown dimmed.
+    var isInternal: Bool { (rawName.contains("(_") && name != "user_id") || name.hasPrefix("ga_") || name.hasSuffix("_user_engagement") || name.hasPrefix("first_open") }
+}
+
+struct PropertySnapshot {
+    var props: [UserPropertyState]
+    var updatedAt: Date
+}
+
+/// Reads the multi-line `batch { bundle { … user_property { … } … } }` dump FA prints on every upload.
+/// One instance per logcat stream; fed from that stream's single reader thread, so no locking.
+final class UploadDumpParser: @unchecked Sendable {
+    private var app: String?
+    private var props: [UserPropertyState] = []
+    private var cur: (name: String?, string: String, int: String?, double: String?, setAt: Double?)?
+
+    private static func body(_ line: String) -> Substring? {
+        guard let r = line.range(of: "): ") else { return nil }
+        return line[r.upperBound...]
+    }
+
+    /// Returns a finished snapshot when the dump's closing brace arrives.
+    func feed(_ line: String) -> (app: String, props: [UserPropertyState])? {
+        if app == nil {
+            guard let r = line.range(of: "Uploading data. app, uncompressed size, data: ") else { return nil }
+            let rest = line[r.upperBound...]
+            app = rest.prefix { $0 != "," }.trimmingCharacters(in: .whitespaces)
+            props = []; cur = nil
+            return nil
+        }
+        guard let body = Self.body(line) else { return nil }
+        if body.hasPrefix("Uploading data. app, uncompressed size") {   // a new dump started without the old one closing
+            app = nil; props = []; cur = nil
+            return feed(line)
+        }
+        let t = body.trimmingCharacters(in: .whitespaces)
+        if cur != nil {
+            if t == "}" {
+                if let c = cur, let name = c.name {
+                    let value = c.int ?? c.double ?? c.string
+                    props.append(UserPropertyState(rawName: name, value: value,
+                                                   setAt: Date(timeIntervalSince1970: (c.setAt ?? 0) / 1000), changedAt: nil))
+                }
+                cur = nil
+            } else if t.hasPrefix("name: ") { cur?.name = String(t.dropFirst(6)) }
+            else if t.hasPrefix("string_value:") { cur?.string = String(t.dropFirst(13)).trimmingCharacters(in: .whitespaces) }
+            else if t.hasPrefix("int_value: ") { cur?.int = String(t.dropFirst(11)) }
+            else if t.hasPrefix("double_value: ") { cur?.double = String(t.dropFirst(14)) }
+            else if t.hasPrefix("set_timestamp_millis: ") { cur?.setAt = Double(t.dropFirst(22)) }
+            return nil
+        }
+        if t == "user_property {" { cur = (nil, "", nil, nil, nil); return nil }
+        // The dump's own closing brace sits at column 0; everything nested is indented.
+        if body == "}" || body.hasPrefix("} //") {
+            defer { app = nil; props = []; cur = nil }
+            return props.isEmpty ? nil : (app ?? "", props)
+        }
+        // Any other unindented line means the dump ended without us seeing the brace.
+        if let f = body.first, f != " ", body != "batch {" { app = nil; props = []; cur = nil }
+        return nil
     }
 }

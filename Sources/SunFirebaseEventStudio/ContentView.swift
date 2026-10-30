@@ -365,6 +365,7 @@ struct ContentView: View {
                 listHeader(compact: true)
             }
             Divider()
+            if model.kindFilter == .properties { PropertySnapshotSection() }   // pinned: only the history below scrolls
             ScrollViewReader { proxy in
                 // Custom rows instead of List selection: the system highlight is saturated blue and recolors the text.
                 ScrollView {
@@ -633,6 +634,95 @@ struct NotificationScheduleView: View {
     private func copyAll(_ list: [ScheduledAlarm]) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(list.map(\.copyText).joined(separator: "\n"), forType: .string)
+    }
+}
+
+/// "Current user properties": the full list the SDK holds for the app, like Firebase's own view.
+struct PropertySnapshotSection: View {
+    @EnvironmentObject private var model: StudioModel
+    @AppStorage("propsCollapsed") private var collapsed = false
+    @AppStorage("propsExpanded") private var expanded = false
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "dd/MM HH:mm:ss"; return f
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            let current = model.currentPropertySnapshot
+            HStack(spacing: 8) {
+                Button { withAnimation(.easeInOut(duration: 0.15)) { collapsed.toggle() } } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: collapsed ? "chevron.right" : "chevron.down").font(.system(size: 9, weight: .bold))
+                        Text("THUỘC TÍNH HIỆN TẠI").font(.caption.bold())
+                        if let c = current {
+                            Text("\(c.snapshot.props.count)").font(.caption.monospacedDigit()).foregroundStyle(Theme.accent)
+                            Text("· cập nhật \(c.snapshot.updatedAt.formatted(date: .omitted, time: .standard))").font(.caption).foregroundStyle(.tertiary)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Danh sách đầy đủ user property mà SDK đang giữ (đọc từ bản kê SDK in ra mỗi lần upload), giống phần User properties của Firebase")
+                if !collapsed, (current?.snapshot.props.count ?? 0) > 6 {
+                    barButton(expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                              help: expanded ? "Thu nhỏ bảng về cỡ mặc định" : "Mở rộng bảng để xem nhiều thuộc tính hơn") {
+                        withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
+                    }
+                }
+                barButton(collapsed ? "chevron.down" : "chevron.up",
+                          help: collapsed ? "Mở bảng thuộc tính" : "Thu gọn bảng thuộc tính (chỉ còn lịch sử)") {
+                    withAnimation(.easeInOut(duration: 0.2)) { collapsed.toggle() }
+                }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 7)
+            if !collapsed {
+                if let c = current {
+                    ScrollView { VStack(spacing: 0) { ForEach(c.snapshot.props) { p in row(p) } } }
+                        .frame(height: min(CGFloat(c.snapshot.props.count) * 27, expanded ? 300 : 180))
+                    Text(c.app).font(.caption2).foregroundStyle(.tertiary).padding(.horizontal, 14).padding(.vertical, 6)
+                } else {
+                    Text("Chưa có dữ liệu thuộc tính. Game chỉ đặt property lúc khởi động hoặc khi giá trị đổi, nên hãy bấm bắt đầu rồi Restart Game… để game đặt lại toàn bộ.")
+                        .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 14).padding(.bottom, 10)
+                }
+            }
+            Divider()
+            HStack {
+                Text("LỊCH SỬ ĐẶT (Setting user property)").font(.caption.bold()).foregroundStyle(.secondary)
+                Spacer()
+            }.padding(.horizontal, 14).padding(.vertical, 9)
+            Divider().opacity(0.5)
+        }
+        .background(Theme.panel.opacity(0.5))
+    }
+
+    private func barButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 10, weight: .semibold)).frame(width: 22, height: 20)
+        }
+        .buttonStyle(.plain).foregroundStyle(.secondary)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+        .help(help)
+    }
+
+    private func row(_ p: UserPropertyState) -> some View {
+        let recent = p.changedAt.map { Date().timeIntervalSince($0) < 120 } ?? false
+        return VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Circle().fill(recent ? Theme.green : .clear).frame(width: 6, height: 6)
+                    .help(recent ? "Mới xuất hiện hoặc vừa đổi giá trị" : "")
+                Text(p.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                    .frame(width: 170, alignment: .leading).help(p.rawName)
+                Text(p.value.isEmpty ? "—" : p.value).font(.system(size: 12, design: .monospaced)).lineLimit(1)
+                    .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                Text(Self.timeFormatter.string(from: p.setAt)).font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
+                    .help("Thời điểm game đặt giá trị này")
+            }
+            .opacity(p.isInternal ? 0.5 : 1)
+            .padding(.horizontal, 14).padding(.vertical, 5)
+            Divider().opacity(0.4)
+        }
     }
 }
 
