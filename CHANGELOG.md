@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.5 — 2026-10-30
+- Fix: bấm vào chữ "Raw log" không mở được (trước đây phải bấm đúng mũi tên nhỏ); giờ bấm cả dòng.
+- Fix: quay màn hình có thể ra file video rỗng (~1 KB) mà app vẫn báo "Quay xong"; giờ app kiểm tra, file rỗng thì xóa và báo "Quay không thành công".
+- Hộp thoại "Khởi động lại game" và "Xóa bộ nhớ log trên máy" viết lại bằng tiếng Việt.
+- Lịch thông báo: khoảng thời gian hiển thị gọn hơn ("Trong khoảng 1h", "1m 7s" thay cho "1h0m0s0ms").
+- Đã kiểm trên máy thật: chụp/quay, mirror, lịch thông báo (khớp 100% với dumpsys alarm), tìm kiếm, copy, export, Clear View, bảng thuộc tính, các hộp xác nhận.
+
 ## 0.6.4 — 2026-10-30
 - **Một nút Bắt đầu / Dừng** thay cho hai nút Configure & Capture và Stream All (hay bị nhầm). Bấm Bắt đầu: nếu máy chưa bật debug Firebase cho đúng game đang chọn thì hỏi một lần rồi bật; máy đã bật sẵn thì ghi log ngay. Dừng thì dừng ghi log.
 - App tự chọn máy đầu tiên đang kết nối, nên chỉ có một máy thì không cần chọn tay.

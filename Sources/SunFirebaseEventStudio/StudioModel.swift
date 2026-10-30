@@ -283,6 +283,13 @@ final class StudioModel: ObservableObject {
         recordingSerials.remove(serial)
         do {
             try await adb.pullAndRemove(serial: serial, remote: remote, to: local)
+            // screenrecord can end at once and leave a ~1 KB shell of a file; do not report that as a recording.
+            let size = ((try? FileManager.default.attributesOfItem(atPath: local.path))?[.size] as? NSNumber)?.intValue ?? 0
+            if size < 20_000 {
+                try? FileManager.default.removeItem(at: local)
+                setActivity(.error, "😿", "Quay không thành công", detail: output.isEmpty ? "Video rỗng (máy dừng quay ngay). Thử quay lại." : String(output.suffix(120)))
+                return
+            }
             lastSavedFile = local
             let pb = NSPasteboard.general
             pb.clearContents()

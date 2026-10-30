@@ -54,17 +54,17 @@ struct ContentView: View {
         } message: {
             Text("\(model.selectedDevice?.displayName ?? "Thiết bị đã chọn") → \(model.selectedGame.title)\n\nApp đổi thuộc tính debug Firebase trên máy (setprop), không tự đóng hay mở lại game. Chưa thấy event thì dùng Restart Game….")
         }
-        .alert("Restart game to begin capture?", isPresented: $model.showLaunchConfirmation) {
+        .alert("Khởi động lại game?", isPresented: $model.showLaunchConfirmation) {
             Button("Hủy", role: .cancel) {}
-            Button("Restart & Stream") { model.confirmLaunch() }
+            Button("Khởi động lại") { model.confirmLaunch() }
         } message: {
-            Text("The app will force-stop and relaunch \(model.selectedGame.title) on \(model.selectedSerial ?? "the selected device") and start its FA / FA-SVC log stream.")
+            Text("App sẽ đóng hẳn rồi mở lại \(model.selectedGame.title) trên \(model.selectedDevice?.displayName ?? "máy đã chọn") và ghi log từ lúc đó. Cần khi game chưa nhận debug mode.")
         }
-        .alert("Clear Android device log buffer?", isPresented: $showDeviceBufferWarning) {
-            Button("Cancel", role: .cancel) {}
-            Button("Clear Device Buffer", role: .destructive) { model.clearDeviceBufferAfterConfirmation() }
+        .alert("Xóa bộ nhớ log trên máy?", isPresented: $showDeviceBufferWarning) {
+            Button("Hủy", role: .cancel) {}
+            Button("Xóa log trên máy", role: .destructive) { model.clearDeviceBufferAfterConfirmation() }
         } message: {
-            Text("This is different from Clear View. It runs logcat -c on the selected device and deletes the current device log buffer.")
+            Text("Khác với Clear View: lệnh này chạy logcat -c trên máy đang chọn và xóa toàn bộ log hiện có của máy.")
         }
         .alert("Có bản cập nhật Logcat", isPresented: $model.showUpdateAlert) {
             Button("Để sau", role: .cancel) {}
@@ -506,10 +506,7 @@ struct ContentView: View {
                             Divider()
                         }
                         if event.params.isEmpty { Text("No parameters").foregroundStyle(.secondary).padding(.top, 8) }
-                        DisclosureGroup("Raw log") {
-                            Text(event.raw).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }.padding(.top, 12).font(.caption)
+                        RawLogView(text: event.raw).id(event.id).padding(.top, 12)
                     }
                 }
             } else {
@@ -720,6 +717,29 @@ struct PropertySnapshotSection: View {
             .opacity(p.isInternal ? 0.5 : 1)
             .padding(.horizontal, 14).padding(.vertical, 5)
             Divider().opacity(0.4)
+        }
+    }
+}
+
+/// "Raw log" toggle whose whole label is clickable (DisclosureGroup only reacts to its tiny arrow).
+struct RawLogView: View {
+    let text: String
+    @State private var open = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button { withAnimation(.easeInOut(duration: 0.15)) { open.toggle() } } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: open ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .bold))
+                    Text("Raw log").font(.caption)
+                    Spacer(minLength: 0)
+                }.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Dòng log gốc của SDK")
+            if open {
+                Text(text).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 }

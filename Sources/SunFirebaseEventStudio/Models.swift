@@ -145,7 +145,13 @@ struct ScheduledAlarm: Identifiable, Hashable {
     let tag: String
 
     var isNotification: Bool { tag.contains("androidnotifications") || tag.lowercased().contains("notif") }
-    var modeText: String { exact ? "Chính xác" : "Trong khoảng \(Self.tidy(window))" }
+    var modeText: String {
+        if exact { return "Chính xác" }
+        if let s = AlarmParser.parseRelative(window.hasPrefix("+") || window.hasPrefix("-") ? window : "+" + window), s > 0 {
+            return "Trong khoảng \(Self.duration(s).replacingOccurrences(of: #" 0[ms]$"#, with: "", options: .regularExpression))"
+        }
+        return "Trong khoảng \(Self.tidy(window))"
+    }
     var repeatText: String {
         guard repeatInterval > 0 else { return "Một lần" }
         return "Lặp mỗi \(Self.duration(repeatInterval))"
