@@ -1,6 +1,6 @@
 {
-  "version": "0.6.1",
+  "version": "0.6.2",
   "date": "2026-10-30",
-  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.6.1/Logcat-0.6.1-macOS-arm64.zip",
-  "notes": "Thẻ trạng thái, thanh công cụ một hàng + tooltip, khung chi tiết thu gọn được, thanh cuộn mảnh."
+  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.6.2/Logcat-0.6.2-macOS-arm64.zip",
+  "notes": "Sửa sót user property; hiện cảnh báo property bị SDK bỏ qua (quá 25 loại)."
 }
