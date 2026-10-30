@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.4 — 2026-10-30
+- **Một nút Bắt đầu / Dừng** thay cho hai nút Configure & Capture và Stream All (hay bị nhầm). Bấm Bắt đầu: nếu máy chưa bật debug Firebase cho đúng game đang chọn thì hỏi một lần rồi bật; máy đã bật sẵn thì ghi log ngay. Dừng thì dừng ghi log.
+- App tự chọn máy đầu tiên đang kết nối, nên chỉ có một máy thì không cần chọn tay.
+- **Fix: tràn event cũ sau khi bấm Bắt đầu** trên máy có bộ nhớ log lớn (có máy chứa hơn 380.000 dòng): logcat dội lại lịch sử lâu hơn thời gian chờ, và hàng trăm event cũ hiện như event mới. Giờ app đọc từ dòng mới nhất, không dội lịch sử nữa (từ ~389.000 dòng xuống 2 dòng khi bắt đầu).
+- Bảng "Thuộc tính hiện tại" vẫn được nạp lúc bấm Bắt đầu nhờ một tiến trình đọc lịch sử property riêng chạy ngầm (event vẫn chỉ hiện từ lúc bấm).
+- Kiểm trên game thật (Snake Escape, vừa thao tác vừa đối chiếu log gốc): 54/54 dòng đủ, tham số đọc đúng 54/54, đúng thứ tự, độ trễ trung vị khoảng 100 ms, tối đa khoảng 420 ms.
+
 ## 0.6.3 — 2026-10-30
 - **Bảng "Thuộc tính hiện tại"** ở tab User Props: danh sách đầy đủ user property mà SDK đang giữ (tên, giá trị, thời điểm đặt), đọc từ bản kê SDK in ra mỗi lần upload. Property mới hoặc vừa đổi có chấm xanh; thuộc tính nội bộ bị làm mờ. Bảng được ghim cố định ở trên, chỉ phần "Lịch sử đặt" bên dưới cuộn; có nút mở rộng và thu gọn (nhớ trạng thái).
 - Bảng được nạp ngay lúc bấm bắt đầu từ bản kê gần nhất trong log máy; nếu máy không in bản kê thì tổng hợp từ các dòng "Setting user property" live. Event vẫn chỉ hiện từ lúc bấm.

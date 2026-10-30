@@ -48,9 +48,11 @@ struct ContentView: View {
         .background(Theme.bg)
         .background(SlimScrollers())
         .preferredColorScheme(scheme)
-        .alert("Configure Firebase Analytics logging?", isPresented: $model.showSetupConfirmation) {
-            Button("Cancel", role: .cancel) {}
-            Button("Configure Device") { model.confirmSetup() }
+        .alert("Bật debug Firebase trên máy này?", isPresented: $model.showSetupConfirmation) {
+            Button("Hủy", role: .cancel) {}
+            Button("Bật và bắt đầu") { model.confirmSetup() }
+        } message: {
+            Text("\(model.selectedDevice?.displayName ?? "Thiết bị đã chọn") → \(model.selectedGame.title)\n\nApp đổi thuộc tính debug Firebase trên máy (setprop), không tự đóng hay mở lại game. Chưa thấy event thì dùng Restart Game….")
         }
         .alert("Restart game to begin capture?", isPresented: $model.showLaunchConfirmation) {
             Button("Hủy", role: .cancel) {}
@@ -157,7 +159,7 @@ struct ContentView: View {
         Picker("Game", selection: $model.selectedGame) {
             ForEach(GamePackage.allCases) { game in Text(game.title).tag(game) }
         }.labelsHidden().fixedSize().frame(minWidth: compact ? 140 : 190, alignment: .leading)
-        .help("Chọn game: dùng cho Configure & Capture và Restart Game")
+        .help("Chọn game: dùng khi bật debug Firebase và Restart Game")
     }
 
     private var streamLabelIcon: String { model.isStreaming ? "stop.fill" : "play.fill" }
@@ -225,15 +227,12 @@ struct ContentView: View {
                     gamePicker(compact: false)
                 }
                 HStack(spacing: 8) {
-                    Button { model.requestSetup() } label: { Label("Configure & Capture", systemImage: "bolt.fill") }
-                        .buttonStyle(.borderedProminent).tint(Theme.accent)
-                        .help("Bật debug Firebase trên máy (setprop) rồi bắt đầu ghi log từ bây giờ. Không tự restart game.")
-                        .disabled(!deviceReady)
-                    Button { model.isStreaming ? model.stopAllStreams() : model.startAllStreams() } label: {
-                        Label(model.isStreaming ? "Stop All" : "Stream All", systemImage: streamLabelIcon)
+                    Button { model.isStreaming ? model.stopSession() : model.startSession() } label: {
+                        Label(model.isStreaming ? "Dừng" : "Bắt đầu", systemImage: model.isStreaming ? "stop.fill" : "play.fill")
                     }
-                    .help(model.isStreaming ? "Dừng ghi log ở mọi thiết bị" : "Bắt đầu ghi log FA / FA-SVC từ mọi máy đang kết nối, từ lúc bấm")
-                    .disabled(!canStream)
+                    .buttonStyle(.borderedProminent).tint(model.isStreaming ? .red : Theme.accent)
+                    .help(model.isStreaming ? "Dừng ghi log" : "Bật debug Firebase cho máy và game đang chọn (hỏi một lần nếu cần) rồi ghi log từ lúc bấm")
+                    .disabled(!model.isStreaming && !deviceReady)
                     Divider().frame(height: 18)
                     toolIcons
                     Divider().frame(height: 18)
@@ -248,11 +247,10 @@ struct ContentView: View {
     }
 
     private var primaryIcons: some View {
-        HStack(spacing: 8) {
-            iconButton("bolt.fill", help: "Configure & Capture: bật debug Firebase rồi ghi log từ bây giờ", tint: Theme.accent, enabled: deviceReady) { model.requestSetup() }
-            iconButton(streamLabelIcon, help: model.isStreaming ? "Stop All: dừng ghi log ở mọi thiết bị" : "Stream All: ghi log từ mọi máy đang kết nối, từ lúc bấm", enabled: canStream) {
-                model.isStreaming ? model.stopAllStreams() : model.startAllStreams()
-            }
+        iconButton(model.isStreaming ? "stop.fill" : "play.fill",
+                   help: model.isStreaming ? "Dừng ghi log" : "Bắt đầu: bật debug Firebase cho máy và game đang chọn rồi ghi log từ lúc bấm",
+                   tint: model.isStreaming ? .red : Theme.accent, enabled: model.isStreaming || deviceReady) {
+            model.isStreaming ? model.stopSession() : model.startSession()
         }
     }
 

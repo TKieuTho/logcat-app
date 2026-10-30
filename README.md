@@ -7,7 +7,7 @@ App macOS (SwiftUI, macOS 13+, Apple Silicon) giúp QA xem **event** và **user 
 | Nhóm | Tính năng | Mô tả | Truy cập |
 | --- | --- | --- | --- |
 | Log | Nhận thiết bị | Tự phát hiện máy Android (làm mới 3 giây), chọn nhiều máy độc lập; tự tải `adb` nếu máy chưa có | Ô Device |
-| Log | Stream log Firebase | Đọc tag `FA`, `FA-SVC` từ nhiều máy cùng lúc; chỉ hiện log từ lúc bấm bắt đầu; tự nối lại khi mất kết nối | Configure & Capture, Stream All Devices |
+| Log | Stream log Firebase | Đọc tag `FA`, `FA-SVC` của máy đang chọn; chỉ hiện log từ lúc bấm Bắt đầu (không đổ lịch sử cũ); tự nối lại khi mất kết nối | Configure & Capture, Stream All Devices |
 | Log | Event và User Property | Ghi nhận cả event và `Setting user property`; lọc All / Events / User Props; property bị SDK bỏ qua (quá 25 loại) hiện chip đỏ; tab User Props có bảng "Thuộc tính hiện tại" (đầy đủ, ghim cố định, mở rộng/thu gọn được) | Tab ở đầu danh sách |
 | Log | Giờ gửi | Hiển thị `HH:mm:ss.SSS` lấy từ logcat; giữ event gửi lặp, chỉ gộp bản sao giữa các kiểu log | Mỗi dòng/thẻ event |
 | Log | Hai chế độ xem | Detailed (thẻ, tham số dạng chip) và Compact (một dòng) | Nút cạnh tab lọc |
@@ -16,7 +16,7 @@ App macOS (SwiftUI, macOS 13+, Apple Silicon) giúp QA xem **event** và **user 
 | Log | Copy / Export | Copy từng event; copy hoặc export các event đang hiển thị | Nút Copy, menu ⋯ |
 | Log | Cảnh báo | Báo khi có dòng log event/property chưa đọc được | Thanh dưới cùng |
 | Log | Clear View / Clear Device Buffer | Xóa danh sách trong app (⇧⌘K) / xóa log trên máy (`adb logcat -c`, có xác nhận) | Menu ⋯ |
-| Thiết bị | Configure & Capture | Bật thuộc tính debug Firebase (`setprop`) rồi bắt đầu ghi; không tự restart game | Nút Configure & Capture |
+| Thiết bị | Bắt đầu / Dừng | Một nút: bật thuộc tính debug Firebase (`setprop`, hỏi một lần nếu máy chưa bật cho game đang chọn) rồi ghi log; không tự restart game | Nút Bắt đầu / Dừng |
 | Thiết bị | Restart Game | Force-stop và mở lại game để nhận debug mode (có xác nhận) | Menu ⋯ |
 | Thiết bị | Notification Schedule | Lịch thông báo local game đã hẹn: giờ nổ, đếm ngược, kiểu hẹn, chu kỳ lặp (không có nội dung) | Menu ⋯ |
 | Thiết bị | Mirror Screen | Chiếu màn hình điện thoại lên Mac bằng scrcpy; tự cài qua Homebrew nếu chưa có | Menu ⋯ |
@@ -28,9 +28,8 @@ App macOS (SwiftUI, macOS 13+, Apple Silicon) giúp QA xem **event** và **user 
 
 ## Dùng
 1. Chọn **Device** và **Game**.
-2. **Configure & Capture** (lần đầu với mỗi máy/game): xác nhận để bật thuộc tính debug Firebase (`setprop`), app bắt đầu ghi log ngay. App **không** tự đóng hay mở lại game.
+2. Bấm **Bắt đầu**: nếu máy chưa bật debug Firebase cho game đang chọn thì app hỏi một lần rồi bật (`setprop`), sau đó ghi log ngay; máy đã bật sẵn thì ghi luôn. App **không** tự đóng hay mở lại game.
 3. Debug mode chỉ có hiệu lực khi game khởi động. Nếu game đang chạy mà event chưa hiện, dùng menu ⋯ → **Restart Game…** (có xác nhận).
-4. Máy đã setup rồi hoặc muốn theo dõi nhiều máy: **Stream All Devices**.
 5. **Clear View Only** (⇧⌘K) chỉ xóa danh sách trong app. **Clear Device Log Buffer…** (có cảnh báo) mới chạy `adb logcat -c` trên máy.
 
 Firebase DebugView vẫn là nguồn đối chiếu chính; Logcat chỉ là bằng chứng phụ. App không tạo event giả.

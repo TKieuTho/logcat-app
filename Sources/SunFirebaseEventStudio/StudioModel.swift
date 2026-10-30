@@ -104,10 +104,10 @@ final class StudioModel: ObservableObject {
 
     private let adb = ADBService()
     private var streamProcesses: [String: Process] = [:]
+    private var historyProcesses: [Process] = []
     private var streamingSerials = Set<String>()
     /// Streams the user asked for; if one dies (unplug, adb restart) it is reconnected when the device is back.
     private var wantedSerials = Set<String>()
-    private var streamAllMode = false
     private var manuallyStopped = Set<String>()
     private var streamGen: [String: UUID] = [:]
     private let ingestQueue = IngestQueue()
@@ -121,7 +121,15 @@ final class StudioModel: ObservableObject {
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.terminateChildren() }
         }
-        adb.$devices.receive(on: RunLoop.main).sink { [weak self] in self?.devices = $0; self?.reconnectStreams() }.store(in: &cancellables)
+        adb.$devices.receive(on: RunLoop.main).sink { [weak self] list in
+            guard let self else { return }
+            self.devices = list
+            // Nothing chosen yet (or the chosen one is gone): pick the first connected phone so Start works right away.
+            if self.selectedSerial == nil || !list.contains(where: { $0.serial == self.selectedSerial }) {
+                self.selectedSerial = (list.first { $0.state == "device" } ?? list.first)?.serial ?? self.selectedSerial
+            }
+            self.reconnectStreams()
+        }.store(in: &cancellables)
         adb.$status.receive(on: RunLoop.main).sink { [weak self] in self?.statusText = $0 }.store(in: &cancellables)
     }
     private var cancellables = Set<AnyCancellable>()
@@ -395,7 +403,22 @@ final class StudioModel: ObservableObject {
         if let s = updateInfo?.url, let u = URL(string: s) { NSWorkspace.shared.open(u) }
     }
 
-    func requestSetup() { showSetupConfirmation = true }
+    /// One button: ask to turn on Firebase debug only when this device is not already set up for the chosen game, then stream it.
+    func startSession() {
+        guard let serial = selectedSerial, selectedDevice?.state == "device" else {
+            errorMessage = "Chọn một thiết bị đang kết nối (đã bấm Allow USB debugging) trước."
+            return
+        }
+        manuallyStopped.remove(serial)
+        let game = selectedGame
+        Task {
+            let st = await adb.debugSetup(serial: serial)
+            if st.app != game.rawValue || !st.verbose { showSetupConfirmation = true }
+            else { startStream(for: serial) }
+        }
+    }
+    func stopSession() { stopAllStreams() }
+
     func confirmSetup() {
         guard let serial = selectedSerial else { return }
         Task {
@@ -420,13 +443,6 @@ final class StudioModel: ObservableObject {
         guard let serial = selectedSerial else { return }
         startStream(for: serial)
     }
-    func startAllStreams() {
-        streamAllMode = true
-        manuallyStopped.removeAll()
-        for device in devices where device.state == "device" {
-            startStream(for: device.serial)
-        }
-    }
     func startStream(for serial: String, auto: Bool = false) {
         guard !streamingSerials.contains(serial) else { return }
         if !auto { manuallyStopped.remove(serial) }
@@ -437,20 +453,9 @@ final class StudioModel: ObservableObject {
             let gate = StreamGate(token: token)
             let queue = ingestQueue
             let dump = UploadDumpParser()
-            let history = HistorySnapshots()
             let p = try adb.startLogcat(serial: serial, onLine: { line in
-                let wasOpen = gate.opened
-                let snap = dump.feed(line)
-                guard gate.pass(line) else {
-                    // Replayed history: events stay hidden, but remember the latest property list per app.
-                    if !wasOpen, let snap { history.latest[snap.app] = snap.props }
-                    if !wasOpen, gate.opened {
-                        for (app, props) in history.latest { queue.push(serial, .snapshot(app: app, props: props)) }
-                        history.latest = [:]
-                    }
-                    return
-                }
-                if let snap { queue.push(serial, .snapshot(app: snap.app, props: snap.props)) }
+                guard gate.pass(line) else { return }
+                if let snap = dump.feed(line) { queue.push(serial, .snapshot(app: snap.app, props: snap.props)) }
                 if let item = StudioModel.prepare(line) { queue.push(serial, item) }
             }, onExit: { [weak self] in
                 Task { @MainActor in self?.streamEnded(serial, gen: gen) }
@@ -458,6 +463,7 @@ final class StudioModel: ObservableObject {
             streamGen[serial] = gen
             streamProcesses[serial] = p
             streamingSerials.insert(serial)
+            loadPropertyHistory(serial)
             Task {
                 do { try await adb.sendStartMarker(serial: serial, token: token) }
                 catch { gate.openNow() }
@@ -475,10 +481,23 @@ final class StudioModel: ObservableObject {
         } catch { errorMessage = error.localizedDescription }
     }
 
+    /// Reads the device's old log once, in the background, only to find the newest property list per app (events stay hidden).
+    private func loadPropertyHistory(_ serial: String) {
+        let dump = UploadDumpParser()
+        let latest = HistorySnapshots()
+        let queue = ingestQueue
+        if let p = try? adb.startLogcat(serial: serial, history: true, onLine: { line in
+            if let snap = dump.feed(line) { latest.latest[snap.app] = snap.props }
+        }, onEnd: {
+            for (app, props) in latest.latest { queue.push(serial, .snapshot(app: app, props: props)) }
+        }) { historyProcesses.append(p) }
+    }
+
     /// Children are not killed when the app exits, so stop them ourselves (otherwise `adb logcat` / scrcpy pile up).
     private func terminateChildren() {
         for p in streamProcesses.values { p.terminationHandler = nil; p.terminate() }
         for p in mirrorProcesses.values { p.terminate() }
+        for p in historyProcesses { p.terminate() }
     }
 
     /// Cleans up `adb logcat` streams left behind by a previous run that crashed or was killed (they are re-parented to launchd).
@@ -493,7 +512,7 @@ final class StudioModel: ObservableObject {
         ps.waitUntilExit()
         for line in (String(data: data, encoding: .utf8) ?? "").split(separator: "\n") {
             let parts = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
-            guard parts.count == 3, parts[1] == "1", parts[2].contains(" logcat -v time -s FA FA-SVC \(ADBService.markerTag):I"),
+            guard parts.count == 3, parts[1] == "1", (parts[2].contains(" logcat -T 1 -v time -s FA FA-SVC \(ADBService.markerTag):I") || parts[2].contains(" logcat -v time -s FA FA-SVC \(ADBService.markerTag):I")),
                   let pid = Int32(parts[0]) else { continue }
             kill(pid, SIGTERM)
         }
@@ -515,10 +534,10 @@ final class StudioModel: ObservableObject {
         setActivity(.error, "🔌", "Mất kết nối \(deviceName(serial))", detail: "Tự nối lại khi máy trở lại", clearAfter: 10)
     }
 
-    /// Runs on every device refresh (3 s): restart wanted streams that died, and pick up new devices in "Stream All" mode.
+    /// Runs on every device refresh (3 s): restart wanted streams that died (unplugged and plugged back, adb restarted…).
     private func reconnectStreams() {
         for d in devices where d.state == "device" && !streamingSerials.contains(d.serial) && !manuallyStopped.contains(d.serial)
-            && (wantedSerials.contains(d.serial) || streamAllMode) {
+            && wantedSerials.contains(d.serial) {
             startStream(for: d.serial, auto: true)
         }
     }
@@ -540,7 +559,6 @@ final class StudioModel: ObservableObject {
         if !isStreaming { setActivity(.done, "💤", "Đã dừng ghi log", clearAfter: 4) }
     }
     func stopAllStreams() {
-        streamAllMode = false
         for serial in Array(streamingSerials) { stopStream(for: serial) }
     }
     func selectDevice(_ serial: String?) {

@@ -108,6 +108,16 @@ final class ADBService: ObservableObject {
         } catch { status = error.localizedDescription }
     }
 
+    /// Which game the device is set up to debug, and whether FA / FA-SVC logging is already verbose.
+    func debugSetup(serial: String) async -> (app: String, verbose: Bool) {
+        func prop(_ n: String) async -> String {
+            ((try? await run(["-s", serial, "shell", "getprop", n])) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let app = await prop("debug.firebase.analytics.app")
+        let fa = await prop("log.tag.FA"), svc = await prop("log.tag.FA-SVC")
+        return (app, fa == "VERBOSE" && svc == "VERBOSE")
+    }
+
     func configureFirebase(serial: String, package: GamePackage) async throws {
         _ = try await run(["-s", serial, "shell", "setprop", "debug.firebase.analytics.app", package.rawValue])
         _ = try await run(["-s", serial, "shell", "setprop", "log.tag.FA", "VERBOSE"])
@@ -130,12 +140,17 @@ final class ADBService: ObservableObject {
         _ = try await run(["-s", serial, "shell", "log", "-t", Self.markerTag, "-p", "i", token])
     }
 
-    func startLogcat(serial: String, onLine: @escaping @Sendable (String) -> Void, onExit: @escaping @Sendable () -> Void) throws -> Process {
+    /// Live stream: `-T 1` starts at the newest entry instead of replaying the whole buffer (hundreds of thousands of lines on some phones).
+    /// With `history: true` it instead dumps the buffer once (`-d`) and ends; `onEnd` fires after the last line was delivered.
+    func startLogcat(serial: String, history: Bool = false, onLine: @escaping @Sendable (String) -> Void,
+                     onExit: @escaping @Sendable () -> Void = {}, onEnd: (@Sendable () -> Void)? = nil) throws -> Process {
         guard let adbPath else { throw NSError(domain: "ADB", code: 1, userInfo: [NSLocalizedDescriptionKey: "ADB is not ready yet."]) }
         let p = Process()
         let pipe = Pipe()
         p.executableURL = adbPath
-        p.arguments = ["-s", serial, "logcat", "-v", "time", "-s", "FA", "FA-SVC", "\(Self.markerTag):I"]
+        p.arguments = history
+            ? ["-s", serial, "logcat", "-d", "-v", "time", "-s", "FA", "FA-SVC"]
+            : ["-s", serial, "logcat", "-T", "1", "-v", "time", "-s", "FA", "FA-SVC", "\(Self.markerTag):I"]
         p.standardOutput = pipe
         p.standardError = pipe
         p.terminationHandler = { _ in onExit() }
@@ -143,7 +158,7 @@ final class ADBService: ObservableObject {
         let pending = LineBuffer()
         pipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            if data.isEmpty { handle.readabilityHandler = nil; pending.flush().forEach(onLine); return }
+            if data.isEmpty { handle.readabilityHandler = nil; pending.flush().forEach(onLine); onEnd?(); return }
             pending.append(data).forEach(onLine)
         }
         try p.run()
