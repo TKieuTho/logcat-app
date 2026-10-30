@@ -62,11 +62,18 @@ struct LogEvent: Identifiable, Hashable {
 
     /// Returns nil for log lines that are not an event (noise from FA / FA-SVC).
     static func parse(raw: String) -> (name: String, params: [EventParam], kind: LogKind)? {
-        // "Setting user property (FE): level, 12" / "Setting user property: level, 12"
-        if let re = try? NSRegularExpression(pattern: #"(?:Setting|Making) user property(?: \(FE\))?: ([A-Za-z0-9_]+), ?(.*)$"#),
+        // "Setting user property: level, 12", "Setting user property(FE): non_personalized_ads(_npa), 0"
+        if let re = try? NSRegularExpression(pattern: #"(?:Setting|Making) user property\s*(?:\(FE\))?: ([A-Za-z0-9_]+)(?:\([^)]*\))?, ?(.*)$"#),
            let mt = re.firstMatch(in: raw, range: NSRange(raw.startIndex..., in: raw)),
            let r1 = Range(mt.range(at: 1), in: raw), let r2 = Range(mt.range(at: 2), in: raw) {
             return (String(raw[r1]), [EventParam(key: "value", value: String(raw[r2]))], .userProperty)
+        }
+        // The SDK drops properties beyond its limit of 25 distinct names; QA needs to see which ones.
+        if let re = try? NSRegularExpression(pattern: #"Too many unique user properties are set\. Ignoring user property: ([A-Za-z0-9_]+)(?:\([^)]*\))?, ?(.*)$"#),
+           let mt = re.firstMatch(in: raw, range: NSRange(raw.startIndex..., in: raw)),
+           let r1 = Range(mt.range(at: 1), in: raw), let r2 = Range(mt.range(at: 2), in: raw) {
+            return (String(raw[r1]), [EventParam(key: "value", value: String(raw[r2])),
+                                      EventParam(key: "status", value: "Bị SDK bỏ qua: quá 25 property")], .userProperty)
         }
         let patterns = [
             #"Logging event(?: \(FE\))?: origin=[^,]*,name=([A-Za-z0-9_]+)(?:\([^)]*\))?,\s*params=(.*)$"#,

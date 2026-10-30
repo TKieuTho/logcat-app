@@ -436,7 +436,7 @@ struct ContentView: View {
                         }
                         .font(.system(size: 11, design: .monospaced))
                         .padding(.horizontal, 7).padding(.vertical, 3)
-                        .background(Theme.panel, in: RoundedRectangle(cornerRadius: 5))
+                        .background(p.key == "status" ? Color.red.opacity(0.12) : Theme.panel, in: RoundedRectangle(cornerRadius: 5))
                     }
                 }
             }

@@ -439,12 +439,16 @@ final class StudioModel: ObservableObject {
         if line.contains(ADBService.markerTag) { return }
         guard let parsed = LogEvent.parse(raw: line) else {
             let l = line.lowercased()
-            if l.contains("logging event") || l.contains("user property") || l.contains("event recorded") {
+            if l.contains("logging event") || l.contains("setting user property") || l.contains("event recorded") {
                 skippedLines += 1
                 lastSkippedLine = line
             }
             return
         }
+        // The "too many properties" warning repeats on every upload cycle; once per property is enough.
+        if parsed.params.contains(where: { $0.key == "status" }),
+           events.suffix(400).contains(where: { $0.deviceSerial == serial && $0.kind == .userProperty && $0.name == parsed.name &&
+               $0.params.contains(where: { $0.key == "status" }) }) { return }
         let date = Self.parseDate(line) ?? Date()
         // FA logs one event in several flavours (Logging event / Event recorded); drop only those cross-flavour copies.
         // Identical repeats in the same flavour are genuine separate sends and are kept.

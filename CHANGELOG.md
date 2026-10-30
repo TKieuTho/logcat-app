@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.2 — 2026-10-30
+- Fix: sót user property. Đọc được dòng có mã rút gọn trong tên (`non_personalized_ads(_npa)`, `user_id(_id)`, `ga_session_id(_sid)`…) và dạng `Setting user property(FE):`. Kiểm trên log thật (~510.000 dòng, 2 máy): thêm 568 property được ghi nhận, 0 dòng còn bị bỏ sót; số event không đổi (đủ).
+- Hiển thị cảnh báo của SDK "Too many unique user properties are set" (quá 25 loại property): property bị Firebase bỏ qua hiện kèm chip đỏ "Bị SDK bỏ qua", mỗi property chỉ một lần.
+- Cảnh báo "dòng log chưa đọc được" chỉ đếm dòng event/property thật, không đếm dòng nội bộ của SDK (ví dụ "Updated engagement user property").
+
 ## 0.6.1 — 2026-10-30
 - **Thẻ trạng thái** ở phần đầu app: báo đang làm gì (đang chụp, đang quay kèm đồng hồ, đang cài scrcpy, đang tải bản cập nhật…) và đã xong gì (chụp/quay xong, file đã copy sẵn để dán ⌘V; bấm vào thẻ để mở file trong Finder), kèm thẻ lỗi khi thất bại. Tự biến mất sau vài giây.
 - **Thanh công cụ một hàng:** cửa sổ rộng hiện đủ mọi chức năng trên một hàng (Configure & Capture, Stream giữ chữ, còn lại là icon); cửa sổ nhỏ dần thì tự chuyển sang hai hoặc ba hàng, không bị cắt.
