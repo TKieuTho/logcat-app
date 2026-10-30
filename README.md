@@ -7,7 +7,7 @@ App macOS (SwiftUI, macOS 13+, Apple Silicon) giúp QA xem **event** và **user 
 | Nhóm | Tính năng | Mô tả | Truy cập |
 | --- | --- | --- | --- |
 | Log | Nhận thiết bị | Tự phát hiện máy Android (làm mới 3 giây), chọn nhiều máy độc lập; tự tải `adb` nếu máy chưa có | Ô Device |
-| Log | Stream log Firebase | Đọc tag `FA`, `FA-SVC` của máy đang chọn; chỉ hiện log từ lúc bấm Bắt đầu (không đổ lịch sử cũ); tự nối lại khi mất kết nối | Configure & Capture, Stream All Devices |
+| Log | Stream log Firebase | Đọc tag `FA`, `FA-SVC` của máy đang chọn; chỉ hiện log từ lúc bấm Bắt đầu (không đổ lịch sử cũ); tự nối lại khi mất kết nối | Nút Bắt đầu / Dừng |
 | Log | Event và User Property | Ghi nhận cả event và `Setting user property`; lọc All / Events / User Props; property bị SDK bỏ qua (quá 25 loại) hiện chip đỏ; tab User Props có bảng "Thuộc tính hiện tại" (đầy đủ, ghim cố định, mở rộng/thu gọn được) | Tab ở đầu danh sách |
 | Log | Giờ gửi | Hiển thị `HH:mm:ss.SSS` lấy từ logcat; giữ event gửi lặp, chỉ gộp bản sao giữa các kiểu log | Mỗi dòng/thẻ event |
 | Log | Hai chế độ xem | Detailed (thẻ, tham số dạng chip) và Compact (một dòng) | Nút cạnh tab lọc |
