@@ -52,7 +52,7 @@ struct ContentView: View {
             Button("Hủy", role: .cancel) {}
             Button("Bật và bắt đầu") { model.confirmSetup() }
         } message: {
-            Text("\(model.selectedDevice?.displayName ?? "Thiết bị đã chọn") → \(model.selectedGame.title)\n\nApp đổi thuộc tính debug Firebase trên máy (setprop), không tự đóng hay mở lại game. Chưa thấy event thì dùng Restart Game….")
+            Text("\(model.pendingSetup.flatMap { p in model.devices.first { $0.serial == p.serial } }?.displayName ?? "Thiết bị đã chọn") → \((model.pendingSetup?.game ?? model.selectedGame).title)\n\nApp đổi thuộc tính debug Firebase trên máy (setprop), không tự đóng hay mở lại game. Chưa thấy event thì dùng Restart Game….")
         }
         .alert("Khởi động lại game?", isPresented: $model.showLaunchConfirmation) {
             Button("Hủy", role: .cancel) {}
@@ -128,8 +128,13 @@ struct ContentView: View {
                 Image(systemName: "moon").tag("dark")
             }.pickerStyle(.segmented).frame(width: 110).labelsHidden().help("Giao diện: theo hệ thống / sáng / tối")
             Circle().fill(model.isStreaming ? Theme.green : .gray).frame(width: 8, height: 8)
-                .help(model.isStreaming ? "Đang ghi log" : "Chưa ghi log")
-            if wide { Text(model.isStreaming ? "LIVE" : "NOT STREAMING").font(.caption.bold()).foregroundStyle(.secondary) }
+                .help(model.isStreaming ? "Đang ghi log:\n" + model.liveSummary.joined(separator: "\n") : "Chưa ghi log")
+            if wide {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(model.isStreaming ? "LIVE" : "NOT STREAMING").font(.caption.bold()).foregroundStyle(.secondary)
+                    ForEach(model.liveSummary, id: \.self) { Text($0).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
+                }
+            }
         }
         .padding(wide ? 16 : 8)
     }
@@ -162,8 +167,8 @@ struct ContentView: View {
         .help("Chọn game: dùng khi bật debug Firebase và Restart Game")
     }
 
-    private var streamLabelIcon: String { model.isStreaming ? "stop.fill" : "play.fill" }
-    private var canStream: Bool { model.isStreaming || model.devices.contains(where: { $0.state == "device" }) }
+    private var streamLabelIcon: String { model.isStreamingSelected ? "stop.fill" : "play.fill" }
+    private var canStream: Bool { model.isStreamingSelected || model.devices.contains(where: { $0.state == "device" }) }
 
     private var moreMenu: some View {
         Menu {
@@ -247,10 +252,10 @@ struct ContentView: View {
     }
 
     private var primaryIcons: some View {
-        iconButton(model.isStreaming ? "stop.fill" : "play.fill",
-                   help: model.isStreaming ? "Dừng ghi log" : "Bắt đầu: bật debug Firebase cho máy và game đang chọn rồi ghi log từ lúc bấm",
-                   tint: model.isStreaming ? .red : Theme.accent, enabled: model.isStreaming || deviceReady) {
-            model.isStreaming ? model.stopSession() : model.startSession()
+        iconButton(model.isStreamingSelected ? "stop.fill" : "play.fill",
+                   help: model.isStreamingSelected ? "Dừng ghi log" : "Bắt đầu: bật debug Firebase cho máy và game đang chọn rồi ghi log từ lúc bấm",
+                   tint: model.isStreamingSelected ? .red : Theme.accent, enabled: model.isStreamingSelected || deviceReady) {
+            model.isStreamingSelected ? model.stopSession() : model.startSession()
         }
     }
 

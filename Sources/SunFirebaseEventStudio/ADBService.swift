@@ -177,19 +177,40 @@ final class LineBuffer: @unchecked Sendable {
         while let nl = tail.firstIndex(of: 0x0A) {
             let line = tail[tail.startIndex..<nl]
             tail.removeSubrange(tail.startIndex...nl)
-            if let s = String(data: line, encoding: .utf8)?.trimmingCharacters(in: .newlines), !s.isEmpty { lines.append(s) }
+            // Lossy decode: one bad byte must not make an event line vanish.
+            let s = String(decoding: line, as: UTF8.self).trimmingCharacters(in: .newlines)
+            if !s.isEmpty { lines.append(s) }
         }
         return lines
     }
     func flush() -> [String] {
         lock.lock(); defer { lock.unlock() }
         defer { tail.removeAll() }
-        guard let s = String(data: tail, encoding: .utf8)?.trimmingCharacters(in: .newlines), !s.isEmpty else { return [] }
-        return [s]
+        let s = String(decoding: tail, as: UTF8.self).trimmingCharacters(in: .newlines)
+        return s.isEmpty ? [] : [s]
     }
 }
 
 extension ADBService {
+    /// A sleeping screen records nothing (screenrecord fails) and screenshots come out black; wake it first.
+    /// Returns true when it had to be woken. WAKEUP is ignored by some phones (Motorola), so fall back to POWER, which is only safe because we know it is off.
+    @discardableResult
+    func wakeScreenIfNeeded(serial: String) async -> Bool {
+        func awake() async -> Bool {
+            ((try? await run(["-s", serial, "shell", "dumpsys power | grep -m1 mWakefulness="])) ?? "").contains("Awake")
+        }
+        if await awake() { return false }
+        _ = try? await run(["-s", serial, "shell", "input", "keyevent", "KEYCODE_WAKEUP"])
+        try? await Task.sleep(for: .seconds(1))
+        if !(await awake()) {
+            _ = try? await run(["-s", serial, "shell", "input", "keyevent", "KEYCODE_POWER"])
+            try? await Task.sleep(for: .seconds(1))
+        }
+        // The panel needs a moment after waking before frames are real (screenshots are black until then).
+        try? await Task.sleep(for: .seconds(2))
+        return true
+    }
+
     /// `exec-out screencap -p` streams a PNG over stdout; written straight to `url`.
     func screenshot(serial: String, to url: URL) async throws {
         guard let adbPath else { throw NSError(domain: "ADB", code: 1, userInfo: [NSLocalizedDescriptionKey: "ADB is not ready yet."]) }

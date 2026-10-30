@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.6 — 2026-10-30
+- Fix: nút Bắt đầu / Dừng giờ theo **máy đang chọn**. Trước đây khi máy A đang ghi log, chọn máy B vẫn thấy "Dừng" nên không Start được B và event của B không vào app.
+- Header ghi rõ máy nào đang ghi log game nào ("LIVE · SM A055F · Snake Escape", mỗi máy một dòng); thông báo và thanh trạng thái cũng nêu tên máy và game.
+- Fix: hộp thoại "Bật debug Firebase" luôn thực hiện cho đúng máy và game đã hỏi, kể cả khi đổi dropdown ngay sau khi bấm Bắt đầu (trước đây có thể bật nhầm sang máy khác).
+- Chụp / quay màn hình: nếu máy đang tắt màn hình, app tự bật sáng và đợi sáng hẳn rồi mới chụp/quay (trước đây ảnh ra đen mà vẫn báo "Chụp xong", quay thì báo lỗi).
+- Quay màn hình: bấm Dừng ngay sau khi Quay không còn bị treo ở "Đang lưu video…" (app gửi lại lệnh dừng, cuối cùng ngắt hẳn nếu cần); thoát app khi đang quay thì dừng và chốt file video; video chạm giới hạn 3 phút có ghi chú "Đã tự dừng ở giới hạn 3 phút".
+- Log: dòng chứa byte UTF-8 lỗi không còn bị bỏ mất; bấm Dừng xong không còn event rơi thêm vào danh sách; danh sách đầy 50.000 event không còn giật.
+- Đã kiểm trên 2 máy thật (Samsung A05, Moto G06 Power): số event trong app khớp log thô (A05 11/11; Moto 81 item so với 82 dòng log, chênh 1 do bộ lọc trùng), quay/chụp khi máy tắt màn hình, 2 máy cùng ghi log.
+
 ## 0.6.5 — 2026-10-30
 - Fix: bấm vào chữ "Raw log" không mở được (trước đây phải bấm đúng mũi tên nhỏ); giờ bấm cả dòng.
 - Fix: quay màn hình có thể ra file video rỗng (~1 KB) mà app vẫn báo "Quay xong"; giờ app kiểm tra, file rỗng thì xóa và báo "Quay không thành công".

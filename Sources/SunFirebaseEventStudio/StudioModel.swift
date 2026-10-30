@@ -14,6 +14,7 @@ enum Prepared {
 final class StreamGate: @unchecked Sendable {
     private let token: String
     private var isOpen = false
+    private var closed = false
     private let lock = NSLock()
     init(token: String) { self.token = token }
     func pass(_ line: String) -> Bool {
@@ -22,7 +23,9 @@ final class StreamGate: @unchecked Sendable {
         if line.contains(token) { isOpen = true }
         return false
     }
-    func openNow() { lock.lock(); isOpen = true; lock.unlock() }
+    func openNow() { lock.lock(); if !closed { isOpen = true }; lock.unlock() }
+    /// After Stop / disconnect: lines still sitting in the pipe must not show up as new events.
+    func close() { lock.lock(); closed = true; isOpen = false; lock.unlock() }
     var opened: Bool { lock.lock(); defer { lock.unlock() }; return isOpen }
 }
 
@@ -65,6 +68,8 @@ final class StudioModel: ObservableObject {
     @Published var isStreaming = false
     @Published var showSetupConfirmation = false
     @Published var showLaunchConfirmation = false
+    /// Phone and game the setup dialog asked about; Confirm must act on these even if the dropdowns changed meanwhile.
+    @Published private(set) var pendingSetup: (serial: String, game: GamePackage)?
     @Published var errorMessage: String?
     @Published var selectedEventID: UUID?
     /// Latest full user-property list per "serial|app", read from the SDK's upload dumps.
@@ -105,11 +110,15 @@ final class StudioModel: ObservableObject {
     private let adb = ADBService()
     private var streamProcesses: [String: Process] = [:]
     private var historyProcesses: [Process] = []
-    private var streamingSerials = Set<String>()
+    @Published private(set) var streamingSerials = Set<String>()
+    /// Game each live stream was started for (the game the phone is set to debug); stays put if the dropdown changes later.
+    @Published private(set) var streamGames: [String: GamePackage] = [:]
     /// Streams the user asked for; if one dies (unplug, adb restart) it is reconnected when the device is back.
     private var wantedSerials = Set<String>()
     private var manuallyStopped = Set<String>()
     private var streamGen: [String: UUID] = [:]
+    private var streamGates: [String: StreamGate] = [:]
+    private var recordStarts: [String: Date] = [:]
     private let ingestQueue = IngestQueue()
     private var serviceObservation: Any?
 
@@ -204,6 +213,12 @@ final class StudioModel: ObservableObject {
             }
         }
     }
+    /// Start/Stop acts on the chosen phone only; the header LIVE light (`isStreaming`) stays "any phone".
+    /// One line per live phone, e.g. "SM A055F · Snake Escape", for the header.
+    var liveSummary: [String] {
+        streamingSerials.sorted().map { "\(deviceName($0)) · \((streamGames[$0] ?? selectedGame).title)" }
+    }
+    var isStreamingSelected: Bool { selectedSerial.map(streamingSerials.contains) ?? false }
     var isRecordingSelected: Bool { selectedSerial.map(recordingSerials.contains) ?? false }
 
     private var downloadsDirectory: URL { FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0] }
@@ -244,6 +259,7 @@ final class StudioModel: ObservableObject {
         setActivity(.working, "📸", "Đang chụp màn hình…")
         Task {
             do {
+                if await adb.wakeScreenIfNeeded(serial: serial) { setActivity(.working, "📸", "Máy đang tắt màn hình, đã bật sáng lại…") }
                 try await adb.screenshot(serial: serial, to: url)
                 lastSavedFile = url
                 let pb = NSPasteboard.general
@@ -261,26 +277,43 @@ final class StudioModel: ObservableObject {
     func toggleRecording() {
         guard let serial = selectedSerial else { return }
         if recordingSerials.contains(serial) {
+            if recordProcesses[serial] == nil {   // still waking the screen: nothing is recording yet, just cancel
+                recordingSerials.remove(serial); clearActivity(); return
+            }
             setActivity(.working, "💾", "Đang lưu video…")
-            Task { await adb.stopRecording(serial: serial) }
+            Task {
+                // The stop signal can miss (screenrecord not up yet right after Start), so repeat until it really ended.
+                for _ in 0..<5 {
+                    await adb.stopRecording(serial: serial)
+                    try? await Task.sleep(for: .seconds(2))
+                    if !recordingSerials.contains(serial) { return }
+                }
+                recordProcesses[serial]?.terminate()
+            }
             return
         }
         let (url, stamp) = captureURL(serial: serial, ext: "mp4")
         let remote = "/sdcard/logcat_rec_\(stamp).mp4"
-        do {
-            let p = try adb.startRecording(serial: serial, remote: remote) { [weak self] status, output in
-                Task { @MainActor in await self?.finishRecording(serial: serial, remote: remote, local: url, status: status, output: output) }
-            }
-            recordProcesses[serial] = p
-            recordingSerials.insert(serial)
-            statusText = "Đang quay màn hình (tối đa 3 phút, bấm Dừng để lưu)…"
-            setActivity(.working, "🎬", "Đang quay màn hình", detail: "Bấm Dừng quay để lưu (tối đa 3 phút)", since: Date())
-        } catch { errorMessage = error.localizedDescription }
+        recordingSerials.insert(serial)   // set at once so a second click during the wake-up wait is a Stop, not a second recording
+        Task {
+            if await adb.wakeScreenIfNeeded(serial: serial) { setActivity(.working, "🎬", "Máy đang tắt màn hình, đã bật sáng lại…") }
+            guard recordingSerials.contains(serial) else { return }
+            do {
+                let p = try adb.startRecording(serial: serial, remote: remote) { [weak self] status, output in
+                    Task { @MainActor in await self?.finishRecording(serial: serial, remote: remote, local: url, status: status, output: output) }
+                }
+                recordProcesses[serial] = p
+                recordStarts[serial] = Date()
+                statusText = "Đang quay màn hình (tối đa 3 phút, bấm Dừng để lưu)…"
+                setActivity(.working, "🎬", "Đang quay màn hình", detail: "Bấm Dừng quay để lưu (tối đa 3 phút)", since: Date())
+            } catch { recordingSerials.remove(serial); errorMessage = error.localizedDescription }
+        }
     }
 
     private func finishRecording(serial: String, remote: String, local: URL, status: Int32, output: String) async {
         recordProcesses[serial] = nil
         recordingSerials.remove(serial)
+        let hitLimit = recordStarts.removeValue(forKey: serial).map { Date().timeIntervalSince($0) >= 175 } ?? false
         do {
             try await adb.pullAndRemove(serial: serial, remote: remote, to: local)
             // screenrecord can end at once and leave a ~1 KB shell of a file; do not report that as a recording.
@@ -295,7 +328,7 @@ final class StudioModel: ObservableObject {
             pb.clearContents()
             pb.writeObjects([local as NSURL])
             statusText = "Đã lưu video vào \(captureDirectoryName) và copy file vào clipboard (⌘V dán vào Finder/Slack/Notion): \(local.lastPathComponent)"
-            setActivity(.done, "🎬", "Quay xong rồi!", detail: "Video đã copy, dán được (⌘V) · lưu ở \(captureDirectoryName)", file: local, clearAfter: 10)
+            setActivity(.done, "🎬", "Quay xong rồi!", detail: (hitLimit ? "Đã tự dừng ở giới hạn 3 phút · " : "") + "Video đã copy, dán được (⌘V) · lưu ở \(captureDirectoryName)", file: local, clearAfter: 10)
         } catch {
             setActivity(.error, "😿", "Lưu video không được", detail: error.localizedDescription)
             errorMessage = "Không lưu được video: \(error.localizedDescription)" + (output.isEmpty ? "" : "\n\(String(output.suffix(300)))")
@@ -420,18 +453,19 @@ final class StudioModel: ObservableObject {
         let game = selectedGame
         Task {
             let st = await adb.debugSetup(serial: serial)
-            if st.app != game.rawValue || !st.verbose { showSetupConfirmation = true }
-            else { startStream(for: serial) }
+            if st.app != game.rawValue || !st.verbose { pendingSetup = (serial, game); showSetupConfirmation = true }
+            else { startStream(for: serial, game: game) }
         }
     }
-    func stopSession() { stopAllStreams() }
+    func stopSession() { stopStream() }
 
     func confirmSetup() {
-        guard let serial = selectedSerial else { return }
+        guard let (serial, game) = pendingSetup else { return }
+        pendingSetup = nil
         Task {
             do {
-                try await adb.configureFirebase(serial: serial, package: selectedGame)
-                startStream(for: serial)
+                try await adb.configureFirebase(serial: serial, package: game)
+                startStream(for: serial, game: game)
                 setActivity(.done, "✨", "Đã bật debug Firebase", detail: "Đang ghi log từ bây giờ")
                 statusText = "Đang ghi log từ bây giờ. Nếu event chưa hiện, mở lại game (Menu ⋯ → Restart Game…) để bật debug mode."
             } catch { errorMessage = error.localizedDescription }
@@ -450,7 +484,7 @@ final class StudioModel: ObservableObject {
         guard let serial = selectedSerial else { return }
         startStream(for: serial)
     }
-    func startStream(for serial: String, auto: Bool = false) {
+    func startStream(for serial: String, auto: Bool = false, game: GamePackage? = nil) {
         guard !streamingSerials.contains(serial) else { return }
         if !auto { manuallyStopped.remove(serial) }
         wantedSerials.insert(serial)
@@ -468,8 +502,10 @@ final class StudioModel: ObservableObject {
                 Task { @MainActor in self?.streamEnded(serial, gen: gen) }
             })
             streamGen[serial] = gen
+            streamGates[serial] = gate
             streamProcesses[serial] = p
             streamingSerials.insert(serial)
+            streamGames[serial] = game ?? (auto ? (streamGames[serial] ?? selectedGame) : selectedGame)
             loadPropertyHistory(serial)
             Task {
                 do { try await adb.sendStartMarker(serial: serial, token: token) }
@@ -479,11 +515,11 @@ final class StudioModel: ObservableObject {
                 gate.openNow()
             }
             isStreaming = !streamingSerials.isEmpty
-            statusText = "Streaming FA / FA-SVC from \(streamingSerials.count) device(s)"
+            statusText = "Đang ghi log: " + liveSummary.joined(separator: "  |  ")
             if auto {
                 setActivity(.done, "🔄", "Đã nối lại \(deviceName(serial))", detail: "Ghi log tiếp từ lúc này", clearAfter: 6)
             } else {
-                setActivity(.done, "🐾", "Đang ghi log", detail: "\(streamingSerials.count) máy · chỉ hiện log từ lúc này", clearAfter: 5)
+                setActivity(.done, "🐾", "Đang ghi log", detail: "\(deviceName(serial)) · \((streamGames[serial] ?? selectedGame).title) · chỉ hiện log từ lúc này", clearAfter: 5)
             }
         } catch { errorMessage = error.localizedDescription }
     }
@@ -505,6 +541,15 @@ final class StudioModel: ObservableObject {
         for p in streamProcesses.values { p.terminationHandler = nil; p.terminate() }
         for p in mirrorProcesses.values { p.terminate() }
         for p in historyProcesses { p.terminate() }
+        // screenrecord keeps running on the phone after we quit; finalize the mp4 instead of leaving it recording.
+        if let adbURL = adb.adbPath {
+            for serial in recordingSerials {
+                let k = Process()
+                k.executableURL = adbURL
+                k.arguments = ["-s", serial, "shell", "kill -2 $(pidof screenrecord)"]
+                try? k.run(); k.waitUntilExit()
+            }
+        }
     }
 
     /// Cleans up `adb logcat` streams left behind by a previous run that crashed or was killed (they are re-parented to launchd).
@@ -534,6 +579,7 @@ final class StudioModel: ObservableObject {
     private func streamEnded(_ serial: String, gen: UUID) {
         guard streamGen[serial] == gen else { return }
         streamGen[serial] = nil
+        streamGates[serial]?.close(); streamGates[serial] = nil
         streamProcesses[serial] = nil
         streamingSerials.remove(serial)
         isStreaming = !streamingSerials.isEmpty
@@ -554,6 +600,7 @@ final class StudioModel: ObservableObject {
     }
     func stopStream(for serial: String) {
         streamGen[serial] = nil
+        streamGates[serial]?.close(); streamGates[serial] = nil
         wantedSerials.remove(serial)
         manuallyStopped.insert(serial)
         if let process = streamProcesses[serial] {
@@ -561,8 +608,9 @@ final class StudioModel: ObservableObject {
             streamProcesses.removeValue(forKey: serial)
         }
         streamingSerials.remove(serial)
+        streamGames[serial] = nil
         isStreaming = !streamingSerials.isEmpty
-        statusText = isStreaming ? "Streaming FA / FA-SVC from \(streamingSerials.count) device(s)" : "Not streaming"
+        statusText = isStreaming ? "Đang ghi log: " + liveSummary.joined(separator: "  |  ") : "Chưa ghi log"
         if !isStreaming { setActivity(.done, "💤", "Đã dừng ghi log", clearAfter: 4) }
     }
     func stopAllStreams() {
@@ -657,7 +705,7 @@ final class StudioModel: ObservableObject {
                 Self.sourceKey($0.raw) != key && abs($0.date.timeIntervalSince(date)) < 1 &&
                 Set($0.params.filter { !$0.isInternal }.map { "\($0.key)=\($0.value)" }) == sig }) { return }
             events.append(LogEvent(date: date, deviceSerial: serial, tag: tag, raw: raw, name: name, params: params, kind: kind))
-            if events.count > 50000 { events.removeFirst(events.count - 50000) }
+            if events.count > 51000 { events.removeFirst(events.count - 50000) }
         }
     }
     nonisolated private static let dateRE = try! NSRegularExpression(pattern: #"^(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})\.(\d{3})"#)
