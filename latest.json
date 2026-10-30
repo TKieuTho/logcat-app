@@ -1,6 +1,6 @@
 {
-  "version": "0.6.3",
+  "version": "0.6.4",
   "date": "2026-10-30",
-  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.6.3/Logcat-0.6.3-macOS-arm64.zip",
-  "notes": "Bảng Thuộc tính hiện tại, tự nối lại khi mất luồng log, log realtime ổn định hơn."
+  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.6.4/Logcat-0.6.4-macOS-arm64.zip",
+  "notes": "Một nút Bắt đầu/Dừng; sửa lỗi tràn event cũ sau khi bấm Bắt đầu trên máy có log lớn."
 }
