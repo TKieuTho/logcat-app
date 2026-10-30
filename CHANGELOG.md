@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.7 — 2026-10-30
+- Header: mỗi máy đang ghi log có nút dừng riêng, dừng được bất kể đang chọn máy nào trong dropdown (cửa sổ hẹp: bấm chấm xanh để chọn máy cần dừng).
+- Lịch thông báo: đếm ngược và giờ báo tính theo đồng hồ và múi giờ của điện thoại (trước đây dùng đồng hồ Mac nên lệch khi máy sai giờ); cảnh báo cam khi máy lệch quá 1 phút so với Mac.
+
 ## 0.6.6 — 2026-10-30
 - Fix: nút Bắt đầu / Dừng giờ theo **máy đang chọn**. Trước đây khi máy A đang ghi log, chọn máy B vẫn thấy "Dừng" nên không Start được B và event của B không vào app.
 - Header ghi rõ máy nào đang ghi log game nào ("LIVE · SM A055F · Snake Escape", mỗi máy một dòng); thông báo và thanh trạng thái cũng nêu tên máy và game.
