@@ -1,6 +1,6 @@
 {
-  "version": "0.6.2",
+  "version": "0.6.3",
   "date": "2026-10-30",
-  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.6.2/Logcat-0.6.2-macOS-arm64.zip",
-  "notes": "Sửa sót user property; hiện cảnh báo property bị SDK bỏ qua (quá 25 loại)."
+  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.6.3/Logcat-0.6.3-macOS-arm64.zip",
+  "notes": "Bảng Thuộc tính hiện tại, tự nối lại khi mất luồng log, log realtime ổn định hơn."
 }
