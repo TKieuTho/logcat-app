@@ -119,6 +119,9 @@ final class StudioModel: ObservableObject {
     @Published var showNotificationSchedule = false
     @Published var alarms: [ScheduledAlarm] = []
     @Published var alarmsLoading = false
+    private var alarmsInFlight = false
+    private var notifRefreshTask: Task<Void, Never>?
+    @AppStorage("notifAutoRefresh") var notifAutoRefresh = true
     @Published var alarmsError: String?
     @Published var activeNotifications: [ActiveNotification] = []
     @Published var notificationsError: String?
@@ -510,25 +513,39 @@ final class StudioModel: ObservableObject {
         NSWorkspace.shared.open(URL(string: "https://github.com/Genymobile/scrcpy/blob/master/doc/macos.md")!)
     }
 
-    func refreshAlarms() {
-        guard let serial = selectedSerial, !alarmsLoading else { return }
-        alarmsLoading = true; alarmsError = nil
+    /// `silent` is the automatic refresh: no spinner and the lists stay on screen while the phone is read again.
+    func refreshAlarms(silent: Bool = false) {
+        guard let serial = selectedSerial, !alarmsInFlight else { return }
+        alarmsInFlight = true
+        if !silent { alarmsLoading = true; alarmsError = nil }
         let package = selectedGame.rawValue
         Task {
+            defer { alarmsInFlight = false; alarmsLoading = false }
             do {
                 let r = try await adb.fetchAlarms(serial: serial, package: package)
                 do { activeNotifications = try await adb.fetchActiveNotifications(serial: serial).list; notificationsError = nil }
                 catch { notificationsError = error.localizedDescription }
+                // The user may have switched phone or game while this was running; do not show another phone's data.
+                guard serial == selectedSerial, package == selectedGame.rawValue else { return }
                 alarms = r.alarms; alarmsClockOffset = r.deviceNow.timeIntervalSinceNow; alarmsTimeZone = r.timeZone; alarmsCheckedAt = Date()
+                alarmsError = nil
             }
             catch { alarmsError = error.localizedDescription }
-            alarmsLoading = false
         }
     }
     func openNotificationSchedule() {
         alarms = []; activeNotifications = []; alarmsCheckedAt = nil
         showNotificationSchedule = true
         refreshAlarms()
+        notifRefreshTask?.cancel()
+        notifRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self, self.showNotificationSchedule else { break }
+                if self.notifAutoRefresh { self.refreshAlarms(silent: true) }
+            }
+            self?.notifRefreshTask = nil
+        }
     }
     func installUpdate() {
         guard let info = updateInfo, !isInstallingUpdate else { return }

@@ -853,6 +853,8 @@ struct NotificationScheduleView: View {
                     Text("\(model.selectedGame.title) · \(model.selectedSerial.map(model.deviceLabel) ?? "")").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
+                Toggle("Tự làm mới (5 giây)", isOn: Binding(get: { model.notifAutoRefresh }, set: { model.notifAutoRefresh = $0; model.objectWillChange.send() }))
+                    .toggleStyle(.checkbox).font(.caption)
                 Button { model.refreshAlarms() } label: { Label("Làm mới", systemImage: "arrow.clockwise") }
                     .disabled(model.alarmsLoading)
                 Button { copyAll(notifs + others) } label: { Label("Copy", systemImage: "doc.on.doc") }
