@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.6.8 — 2026-11-10
+- Sửa: **Bộ nhớ game** hiện PSS = 0 trên Android cũ (máy không in dòng `TOTAL PSS:`); giờ đọc từ `TOTAL:` / bảng `TOTAL` và chịu được số có dấu phẩy. Đã kiểm trên Samsung SM-G610F.
 - Chụp màn hình nhanh hơn: lấy ảnh raw từ máy rồi mã hoá PNG trên Mac (máy khỏi nén PNG), và kiểm tra màn hình sáng chạy song song với lúc chụp. Đo trên 2 máy thật: ~1,1–1,2 giây khi máy đang sáng; máy đang ngủ vẫn phải chờ bật sáng (~5–6 giây). Header lạ (HDR) tự quay về `screencap -p`.
 - Quét crash cũ khi bấm Start gom theo lô (loại trùng một lần, sắp xếp một lần) thay vì quét cả danh sách 50.000 event cho từng crash, hết giật khi máy có log lớn. Event Firebase không bị ảnh hưởng.
 - Thêm bộ test tự động (parse event, ghép dòng log, parser crash, đổi ảnh raw); chạy bằng `swift test` (với Command Line Tools cần thêm cờ swift-testing, xem README).

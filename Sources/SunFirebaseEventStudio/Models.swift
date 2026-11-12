@@ -406,7 +406,8 @@ enum MemInfoParser {
             return String(s[g])
         }
         m.pid = first(#"MEMINFO in pid (\d+)"#, in: app) ?? ""
-        m.totalPSS = int(first(#"TOTAL PSS:\s+(\d+)"#, in: app) ?? "0")
+        // Newer Android prints "TOTAL PSS:"; older ones only have "TOTAL:" in App Summary or "TOTAL  <pss> ..." in the table.
+        m.totalPSS = int(first(#"TOTAL PSS:\s+([\d,]+)"#, in: app) ?? first(#"(?m)^\s*TOTAL:\s+([\d,]+)"#, in: app) ?? first(#"(?m)^\s*TOTAL\s+(\d+)"#, in: app) ?? "0")
         m.totalRSS = int(first(#"TOTAL RSS:\s+(\d+)"#, in: app) ?? "0")
         m.swapPSS = int(first(#"TOTAL SWAP PSS:\s+(\d+)"#, in: app) ?? "0")
         let rowRE = try? NSRegularExpression(pattern: #"^\s*([A-Za-z][A-Za-z ]*?):\s+(\d+)(?:\s+\d+)?\s*$"#)

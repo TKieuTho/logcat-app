@@ -90,3 +90,36 @@ import Foundation
         #expect(ADBService.pngFromRawScreencap(Data(raw(w: 20, h: 10, header: 16).dropLast(5))) == nil)   // truncated transfer
     }
 }
+
+@Suite struct MemInfoTests {
+    @Test func oldAndroidWithoutTotalPssLine() {
+        let dump = """
+        ** MEMINFO in pid 7609 [x.y] **
+                   Pss  Private
+                 Total    Dirty
+                ------   ------
+          Native Heap     7229     7220
+                TOTAL    84515    73212     7232   184487   156776    99144    57631
+
+         App Summary
+                               Pss(KB)
+                                ------
+                   Java Heap:    17316
+                 Native Heap:     7220
+
+                       TOTAL:    84515       TOTAL SWAP PSS:   184487
+
+         Objects
+                       Views:       41         ViewRootImpl:        1
+        """
+        let m = MemInfoParser.parse(package: "x.y", app: dump, device: "")
+        #expect(m.running)
+        #expect(m.totalPSS == 84515)
+        #expect(m.swapPSS == 184487)
+    }
+
+    @Test func newAndroidTotalPssLine() {
+        let dump = "** MEMINFO in pid 1 [x.y] **\n App Summary\n   TOTAL PSS:   1,234   TOTAL RSS: 2000   TOTAL SWAP PSS: 5\n"
+        #expect(MemInfoParser.parse(package: "x.y", app: dump, device: "").totalPSS == 1234)
+    }
+}
