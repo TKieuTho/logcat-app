@@ -123,3 +123,22 @@ import Foundation
         #expect(MemInfoParser.parse(package: "x.y", app: dump, device: "").totalPSS == 1234)
     }
 }
+
+@Suite struct NotificationParserTests {
+    @Test func dateSuffixAfterTimestampIsAccepted() {
+        let dump = """
+          Notification List:
+            NotificationRecord(0x024f3d80: pkg=studio.sun.snake.escape.puzzle user=UserHandle{0} id=1 tag=null importance=3 key=0|studio.sun.snake.escape.puzzle|1|null|10248: Notification(channel=default_channel flags=AUTO_CANCEL))
+              mCreationTimeMs=1794461888379(2026-11-12 12:38:08.379+0700)
+              mUpdateTimeMs=1794461888379(2026-11-12 12:38:08.379+0700)
+              key=0|studio.sun.snake.escape.puzzle|1|null|10248
+                    android.title=String (Hello)
+                    android.text=String (World)
+          Snoozed notifications:
+        """
+        let list = ActiveNotificationParser.parse(dump: dump)
+        #expect(list.count == 1)
+        #expect(list.first?.title == "Hello")
+        #expect(list.first?.package == "studio.sun.snake.escape.puzzle")
+    }
+}

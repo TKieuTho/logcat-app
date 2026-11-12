@@ -341,7 +341,8 @@ enum ActiveNotificationParser {
         let records = section.components(separatedBy: "NotificationRecord(").dropFirst()
         func field(_ r: String, _ key: String) -> String? {
             guard let k = r.range(of: key) else { return nil }
-            return String(r[k.upperBound...].prefix { !$0.isWhitespace && $0 != ")" })
+            // Some Android builds print "mCreationTimeMs=1794461888379(2026-11-12 12:38:08.379+0700)": the number ends at "(".
+            return String(r[k.upperBound...].prefix { !$0.isWhitespace && $0 != ")" && $0 != "(" })
         }
         func text(_ r: String, _ key: String) -> String {
             guard let line = r.components(separatedBy: "\n").first(where: { $0.contains(key + "=") }),
