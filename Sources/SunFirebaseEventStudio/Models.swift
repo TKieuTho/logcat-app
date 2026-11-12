@@ -360,6 +360,11 @@ enum ActiveNotificationParser {
                 let key = String(r[g.upperBound...].prefix { !$0.isWhitespace })
                 if key != "ranker_group", !key.hasPrefix("Aggregate") { campaign = key }
             }
+            // Some builds put the group in the record's first line instead: "... flags=AUTO_CANCEL groupKey=MORNING_D1 vis=PRIVATE ...".
+            if campaign.isEmpty, let head = r.components(separatedBy: "\n").first, let g = head.range(of: " groupKey=") {
+                let key = String(head[g.upperBound...].prefix { !$0.isWhitespace && $0 != ")" })
+                if !key.isEmpty, !key.hasPrefix("0|"), key != "ranker_group", !key.hasPrefix("Aggregate") { campaign = key }
+            }
             let fire = field(r, "fireTime=Long (").flatMap(Double.init).map { Date(timeIntervalSince1970: $0 / 1000) }
             return ActiveNotification(package: pkg, channel: field(r, "channel=") ?? "",
                                       title: text(r, "android.title"), text: text(r, "android.text"),
@@ -529,4 +534,39 @@ struct RecordingSession {
     var stoppedMac: Date?
     var lostMac: Date?
     var gapText: String?
+}
+
+
+/// Keeps the "recorded notifications" list: remembers each new notification once and marks it gone only after it is
+/// missing from two polls in a row, so one bad or empty dump cannot flag everything as swiped away.
+enum NotificationLogMerge {
+    static let missesBeforeGone = 2
+
+    /// Returns the notifications that were new in this poll (newest first); `log` gets them at the front.
+    @discardableResult
+    static func apply(log: inout [LoggedNotification], ids: inout Set<String>, misses: inout [String: Int],
+                      serial: String, list: [ActiveNotification], deviceNow: Date, limit: Int = 2000) -> [LoggedNotification] {
+        let nowIDs = Set(list.map { serial + "|" + $0.logID })
+        var fresh: [LoggedNotification] = []
+        for n in list.reversed() where !ids.contains(serial + "|" + n.logID) {
+            let l = LoggedNotification(serial: serial, notification: n, goneAt: nil)
+            ids.insert(l.id); fresh.append(l)
+        }
+        for i in log.indices where log[i].serial == serial {
+            let id = log[i].id
+            if nowIDs.contains(id) {
+                misses[id] = nil
+                log[i].goneAt = nil        // it came back: it was a bad read, not a swipe
+            } else if log[i].goneAt == nil {
+                let m = (misses[id] ?? 0) + 1
+                misses[id] = m
+                if m >= missesBeforeGone { log[i].goneAt = deviceNow }
+            }
+        }
+        if !fresh.isEmpty {
+            log.insert(contentsOf: fresh.reversed(), at: 0)
+            if log.count > limit { log.removeLast(log.count - limit) }
+        }
+        return fresh.reversed()
+    }
 }

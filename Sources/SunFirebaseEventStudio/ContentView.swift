@@ -951,7 +951,7 @@ struct NotificationScheduleView: View {
             } else {
                 ScrollView { VStack(spacing: 0) { ForEach(list) { shownRow($0.notification, goneAt: $0.goneAt) } } }
             }
-            Text("Ghi mỗi 5 giây khi đang Start, lưu thêm vào <thư mục lưu>/Notifications/. Noti bắn và bị xoá trong vòng dưới 5 giây có thể bị sót.")
+            Text("Ghi mỗi 5 giây khi đang Start, lưu thêm vào <thư mục lưu>/Notifications/. Noti bắn và bị xoá trong vòng dưới 5 giây có thể bị sót; chỉ ghi \"đã xoá\" khi noti vắng mặt 2 lần quét liên tiếp (~10 giây).")
                 .font(.caption2).foregroundStyle(.tertiary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

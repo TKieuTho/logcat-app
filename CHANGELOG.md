@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.6.8 — 2026-11-10
+- Thông báo: "đã xoá" chỉ ghi khi noti vắng mặt 2 lần quét liên tiếp (~10 giây), một lần đọc dump lỗi/rỗng không còn đánh dấu xoá cả loạt; noti hiện lại thì bỏ dấu. Loại noti của game đọc thêm từ `groupKey=` ở dòng đầu bản ghi (máy không có `|g:`). Dòng trong file `Notifications/` ghi theo thứ tự cũ → mới. Đã kiểm trên SM-A055F: đăng, ghi nhận, ẩn (snooze), đánh dấu xoá, hiện lại, đủ dòng trong file.
 - Sửa: tab **Đang hiển thị / Đã ghi** trống trên máy có dump `mCreationTimeMs=...(ngày giờ)` (Samsung/Android 15): parser đọc nhầm cả phần ngày trong ngoặc thành số rồi bỏ mọi thông báo. Đã kiểm trên SM-A055F và SM-G610F (38 thông báo đọc được).
 - Sửa: **Bộ nhớ game** hiện PSS = 0 trên Android cũ (máy không in dòng `TOTAL PSS:`); giờ đọc từ `TOTAL:` / bảng `TOTAL` và chịu được số có dấu phẩy. Đã kiểm trên Samsung SM-G610F.
 - Chụp màn hình nhanh hơn: lấy ảnh raw từ máy rồi mã hoá PNG trên Mac (máy khỏi nén PNG), và kiểm tra màn hình sáng chạy song song với lúc chụp. Đo trên 2 máy thật: ~1,1–1,2 giây khi máy đang sáng; máy đang ngủ vẫn phải chờ bật sáng (~5–6 giây). Header lạ (HDR) tự quay về `screencap -p`.

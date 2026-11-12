@@ -142,3 +142,80 @@ import Foundation
         #expect(list.first?.package == "studio.sun.snake.escape.puzzle")
     }
 }
+
+@Suite struct NotificationLogTests {
+    private func note(_ id: Int, posted: TimeInterval = 1_000) -> ActiveNotification {
+        ActiveNotification(package: "p.q", channel: "c", title: "t\(id)", text: "", posted: Date(timeIntervalSince1970: posted + Double(id)),
+                           updated: Date(timeIntervalSince1970: posted + Double(id)), ongoing: false, campaign: "", scheduledFire: nil, key: "0|p.q|\(id)|null|1")
+    }
+    private func poll(_ list: [ActiveNotification], _ log: inout [LoggedNotification], _ ids: inout Set<String>, _ misses: inout [String: Int], now: Double = 9_000) -> [LoggedNotification] {
+        NotificationLogMerge.apply(log: &log, ids: &ids, misses: &misses, serial: "S", list: list, deviceNow: Date(timeIntervalSince1970: now))
+    }
+
+    @Test func newNotificationsAreRecordedOnceNewestFirst() {
+        var log: [LoggedNotification] = [], ids = Set<String>(), misses: [String: Int] = [:]
+        let first = poll([note(2), note(1)], &log, &ids, &misses)   // list is newest first, like the parser's output
+        #expect(first.map(\.notification.title) == ["t2", "t1"])
+        #expect(log.map(\.notification.title) == ["t2", "t1"])
+        #expect(poll([note(2), note(1)], &log, &ids, &misses).isEmpty)   // seen again: nothing new
+        _ = poll([note(3), note(2), note(1)], &log, &ids, &misses)
+        #expect(log.map(\.notification.title) == ["t3", "t2", "t1"])
+    }
+
+    @Test func goneNeedsTwoMissesAndAnEmptyReadDoesNotWipeEverything() {
+        var log: [LoggedNotification] = [], ids = Set<String>(), misses: [String: Int] = [:]
+        _ = poll([note(2), note(1)], &log, &ids, &misses)
+        _ = poll([], &log, &ids, &misses)                           // one bad/empty dump
+        #expect(log.allSatisfy { $0.goneAt == nil })
+        _ = poll([note(2), note(1)], &log, &ids, &misses)           // they are back: counter resets
+        _ = poll([note(2)], &log, &ids, &misses)                    // 1 swiped away, first miss
+        #expect(log.allSatisfy { $0.goneAt == nil })
+        _ = poll([note(2)], &log, &ids, &misses, now: 9_500)        // second miss in a row
+        #expect(log.first { $0.notification.title == "t1" }?.goneAt == Date(timeIntervalSince1970: 9_500))
+        #expect(log.first { $0.notification.title == "t2" }?.goneAt == nil)
+    }
+
+    @Test func otherPhonesAreNotTouched() {
+        var log: [LoggedNotification] = [], ids = Set<String>(), misses: [String: Int] = [:]
+        _ = poll([note(1)], &log, &ids, &misses)
+        for _ in 0..<3 { _ = NotificationLogMerge.apply(log: &log, ids: &ids, misses: &misses, serial: "OTHER", list: [], deviceNow: Date()) }
+        #expect(log.allSatisfy { $0.goneAt == nil })
+    }
+
+    @Test func campaignFromGroupKeyInHeaderLine() {
+        let dump = """
+          Notification List:
+            NotificationRecord(0x1: pkg=com.blossom.tile.match.puzzle user=UserHandle{0} id=695 tag=null key=0|com.blossom.tile.match.puzzle|695|null|10248: Notification(channel=default_channel flags=AUTO_CANCEL color=0x0 groupKey=MORNING_D1 vis=PRIVATE))
+              mCreationTimeMs=1794461888379(2026-11-12 12:38:08.379+0700)
+                    android.title=String (Good morning)
+            NotificationRecord(0x2: pkg=studio.sun.solitaire user=UserHandle{0} id=0 tag=x key=0|studio.sun.solitaire|0|x|1: Notification(channel=default_channel flags=AUTO_CANCEL groupKey=0|studio.sun.solitaire|0|x|1 vis=PRIVATE))
+              mCreationTimeMs=1794461888380(2026-11-12 12:38:08.380+0700)
+                    android.title=String (Push)
+          Snoozed notifications:
+        """
+        let list = ActiveNotificationParser.parse(dump: dump)
+        #expect(list.count == 2)
+        #expect(list.first { $0.title == "Good morning" }?.campaign == "MORNING_D1")
+        #expect(list.first { $0.title == "Push" }?.campaign == "")
+    }
+
+    @Test func titleWithParenthesesAndMissingTitle() {
+        let dump = """
+          Notification List:
+            NotificationRecord(0x1: pkg=com.android.vending user=UserHandle{0} id=1 tag=null key=0|com.android.vending|1|null|1: Notification(channel=c flags=0))
+              mCreationTimeMs=1794461888379(2026-11-12 12:38:08.379+0700)
+                    android.title=String (Bạn đã mua Coin Pack (Tile Adventure))
+                    android.text=String (a (b) c)
+            NotificationRecord(0x2: pkg=com.tenqube.notisave user=UserHandle{0} id=1 tag=null key=0|com.tenqube.notisave|1|null|2: Notification(channel=c flags=ONGOING_EVENT))
+              mCreationTimeMs=1794461888000(2026-11-12 12:38:08.000+0700)
+                    android.title=null
+          Snoozed notifications:
+        """
+        let list = ActiveNotificationParser.parse(dump: dump)
+        #expect(list.count == 2)
+        #expect(list.first { $0.package == "com.android.vending" }?.title == "Bạn đã mua Coin Pack (Tile Adventure)")
+        #expect(list.first { $0.package == "com.android.vending" }?.text == "a (b) c")
+        #expect(list.first { $0.package == "com.tenqube.notisave" }?.title == "")
+        #expect(list.first { $0.package == "com.tenqube.notisave" }?.ongoing == true)
+    }
+}

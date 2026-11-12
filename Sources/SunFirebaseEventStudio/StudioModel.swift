@@ -125,6 +125,7 @@ final class StudioModel: ObservableObject {
     /// Every notification seen while recording, kept after the user swipes it away.
     @Published var notificationLog: [LoggedNotification] = []
     private var notificationLogIDs = Set<String>()
+    private var notificationMisses: [String: Int] = [:]
     private var notifPollTask: Task<Void, Never>?
     /// One entry per phone that was started in this run of the app: when recording began, stopped or dropped.
     @Published var sessions: [String: RecordingSession] = [:]
@@ -692,19 +693,10 @@ final class StudioModel: ObservableObject {
     }
     private func pollNotifications(_ serial: String) async {
         guard let r = try? await adb.fetchActiveNotifications(serial: serial) else { return }
-        let nowIDs = Set(r.list.map { serial + "|" + $0.logID })
-        var fresh: [LoggedNotification] = []
-        for n in r.list.reversed() where !notificationLogIDs.contains(serial + "|" + n.logID) {
-            let l = LoggedNotification(serial: serial, notification: n, goneAt: nil)
-            notificationLogIDs.insert(l.id); fresh.append(l)
-        }
-        for i in notificationLog.indices where notificationLog[i].serial == serial && notificationLog[i].goneAt == nil && !nowIDs.contains(notificationLog[i].id) {
-            notificationLog[i].goneAt = r.deviceNow
-        }
+        let fresh = NotificationLogMerge.apply(log: &notificationLog, ids: &notificationLogIDs, misses: &notificationMisses,
+                                               serial: serial, list: r.list, deviceNow: r.deviceNow)
         guard !fresh.isEmpty else { return }
-        notificationLog.insert(contentsOf: fresh.reversed(), at: 0)
-        if notificationLog.count > 2000 { notificationLog.removeLast(notificationLog.count - 2000) }
-        appendNotificationFile(fresh, serial: serial)
+        appendNotificationFile(fresh.reversed(), serial: serial)   // file lines go oldest first
     }
     /// <capture dir>/Notifications/<phone>_<day>.txt, one line per notification.
     private func appendNotificationFile(_ list: [LoggedNotification], serial: String) {
@@ -881,7 +873,7 @@ final class StudioModel: ObservableObject {
     func resetSession() {
         events.removeAll(); selectedEventID = nil
         sessions = sessions.filter { streamingSerials.contains($0.key) }
-        notificationLog = []; notificationLogIDs = []; activeNotifications = []
+        notificationLog = []; notificationLogIDs = []; notificationMisses = [:]; activeNotifications = []
         perfSamples = []; meminfoHistory = []; meminfo = nil
         skippedLines = 0
         setActivity(.done, "🧹", "Đã xoá toàn bộ dữ liệu phiên trong app", detail: "Log trên máy vẫn còn nguyên; file đã lưu không bị xoá", clearAfter: 5)
