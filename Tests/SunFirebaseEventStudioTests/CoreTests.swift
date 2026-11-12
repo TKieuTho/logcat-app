@@ -1,0 +1,92 @@
+import Testing
+import Foundation
+@testable import SunFirebaseEventStudio
+
+@Suite struct EventParsingTests {
+    @Test func testLoggingEventIsParsed() {
+        let line = "11-12 10:00:01.123 V/FA (1234): Logging event: origin=app,name=level_start,params=Bundle[{level=5, mode=hard}]"
+        let e = LogEvent.parse(raw: line)
+        #expect(e?.name == "level_start")
+        #expect(e?.params.first { $0.key == "level" }?.value == "5")
+        #expect(e?.params.first { $0.key == "mode" }?.value == "hard")
+    }
+
+    @Test func testNoiseLineIsIgnored() {
+        #expect((LogEvent.parse(raw: "11-12 10:00:01.123 V/FA (1234): Scheduling upload")) == nil)
+        #expect((StudioModel.prepare("11-12 10:00:01.123 V/FA (1234): Scheduling upload")) == nil)
+    }
+
+    @Test func testUnreadableEventLineIsCountedNotDropped() {
+        // Looks like an event but has no parsable name: must surface as .unreadable, never vanish silently.
+        let item = StudioModel.prepare("11-12 10:00:01.123 V/FA (1234): Logging event garbage")
+        if case .unreadable? = item { } else if case .event? = item { } else { Issue.record("line was dropped") }
+    }
+
+    @Test func testRelevantFilter() {
+        #expect(LogEvent.looksRelevant("Event recorded: Event{x}"))
+        #expect(!(LogEvent.looksRelevant("something else")))
+    }
+}
+
+@Suite struct LineBufferTests {
+    @Test func testLineSplitAcrossReadsIsNotLost() {
+        let b = LineBuffer()
+        #expect(b.append(Data("abc de".utf8)) == [])
+        #expect(b.append(Data("f\nsecond\nthi".utf8)) == ["abc def", "second"])
+        #expect(b.flush() == ["thi"])
+    }
+
+    @Test func testInvalidUTF8DoesNotDropLine() {
+        let b = LineBuffer()
+        var d = Data("Logging event ".utf8); d.append(0xFF); d.append(contentsOf: Array("\n".utf8))
+        #expect(b.append(d).count == 1)
+    }
+}
+
+@Suite struct CrashParserTests {
+    @Test func testFatalExceptionIsReported() {
+        var out: [CrashReport] = []
+        let lock = NSLock()
+        let p = CrashParser(package: "com.test.game") { lock.lock(); out.append($0); lock.unlock() }
+        p.feed("11-12 10:00:00.100  4321  4321 E AndroidRuntime: FATAL EXCEPTION: main")
+        p.feed("11-12 10:00:00.101  4321  4321 E AndroidRuntime: Process: com.test.game, PID: 4321")
+        p.feed("11-12 10:00:00.102  4321  4321 E AndroidRuntime: java.lang.NullPointerException")
+        p.flushAll()
+        #expect(out.count == 1)
+        #expect(out.first?.kind == .fatal)
+        #expect(out.first?.package == "com.test.game")
+        #expect(out.first?.isGame ?? false)
+    }
+
+    @Test func testPlainWarningsProduceNoCrash() {
+        var count = 0
+        let p = CrashParser(package: "com.test.game") { _ in count += 1 }
+        p.feed("11-12 10:00:00.100  100  100 W SomeTag: just a warning")
+        p.feed("11-12 10:00:00.200  100  100 I ActivityManager: Displayed something")
+        p.flushAll()
+        #expect(count == 0)
+    }
+}
+
+@Suite struct ScreencapTests {
+    private func raw(w: Int, h: Int, header: Int, format: UInt32 = 1) -> Data {
+        var d = Data()
+        for v in [UInt32(w), UInt32(h), format] { var x = v.littleEndian; d.append(Data(bytes: &x, count: 4)) }
+        d.append(Data(count: header - 12))
+        d.append(Data(repeating: 0x80, count: w * h * 4))
+        return d
+    }
+
+    @Test func testHeader12And16BothDecode() throws {
+        for header in [12, 16] {
+            let png = try #require(ADBService.pngFromRawScreencap(raw(w: 20, h: 10, header: header)))
+            #expect(Array(png.prefix(4)) == [0x89, 0x50, 0x4E, 0x47])
+        }
+    }
+
+    @Test func testUnexpectedFormatFallsBack() {
+        #expect((ADBService.pngFromRawScreencap(raw(w: 20, h: 10, header: 16, format: 4))) == nil)
+        #expect((ADBService.pngFromRawScreencap(Data(count: 10))) == nil)
+        #expect(ADBService.pngFromRawScreencap(Data(raw(w: 20, h: 10, header: 16).dropLast(5))) == nil)   // truncated transfer
+    }
+}

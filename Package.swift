@@ -5,5 +5,8 @@ let package = Package(
     name: "SunFirebaseEventStudio",
     platforms: [.macOS(.v13)],
     products: [.executable(name: "SunFirebaseEventStudio", targets: ["SunFirebaseEventStudio"])],
-    targets: [.executableTarget(name: "SunFirebaseEventStudio")]
+    targets: [
+        .executableTarget(name: "SunFirebaseEventStudio"),
+        .testTarget(name: "SunFirebaseEventStudioTests", dependencies: ["SunFirebaseEventStudio"])
+    ]
 )

@@ -12,13 +12,16 @@ App macOS (SwiftUI, macOS 13+, Apple Silicon) giúp QA xem **event** và **user 
 | Log | Giờ gửi | Hiển thị `HH:mm:ss.SSS` lấy từ logcat; giữ event gửi lặp, chỉ gộp bản sao giữa các kiểu log | Mỗi dòng/thẻ event |
 | Log | Hai chế độ xem | Detailed (thẻ, tham số dạng chip) và Compact (một dòng) | Nút cạnh tab lọc |
 | Log | Chi tiết event | Bảng key/value của tham số, log gốc (Raw log). Cửa sổ rộng: khung bên phải, thu gọn bằng tab ‹ › (Esc); cửa sổ nhỏ: trang riêng có nút "‹ Danh sách" | Bấm vào event |
+| Log | Crash / Exception | Luồng `adb logcat` riêng bắt Fatal (Java), Native (tombstone), ANR, Unity/IL2CPP, Died (process bị kill), OOM (lmkd, OutOfMemoryError), Other (System.err, StrictMode); gom stacktrace nhiều dòng thành một mục; chỉ hiện crash của game đang ghi log (tick "All apps" để xem mọi app); chip lọc theo loại kèm số đếm; khi Start đọc lại crash cũ còn trên máy (buffer crash + DropBox); mỗi crash tự lưu một file `.txt` kèm CONTEXT (máy, phiên bản app, RAM, log cuối, event Firebase trước đó) vào `<thư mục ảnh/video>/Crashes/<game>/` | Tab Crashes; menu ⋯ (bật/tắt ghi, tự lưu, mở thư mục) |
 | Log | Search | Nhiều từ (AND) trên tên event, tên và giá trị param | Ô Search |
 | Log | Copy / Export | Copy từng event; copy hoặc export các event đang hiển thị | Nút Copy, menu ⋯ |
 | Log | Cảnh báo | Báo khi có dòng log event/property chưa đọc được | Thanh dưới cùng |
 | Log | Clear View / Clear Device Buffer | Xóa danh sách trong app (⇧⌘K) / xóa log trên máy (`adb logcat -c`, có xác nhận) | Menu ⋯ |
 | Thiết bị | Bắt đầu / Dừng | Một nút: bật thuộc tính debug Firebase (`setprop`, hỏi một lần nếu máy chưa bật cho game đang chọn) rồi ghi log; không tự restart game | Nút Bắt đầu / Dừng |
 | Thiết bị | Restart Game | Force-stop và mở lại game để nhận debug mode (có xác nhận) | Menu ⋯ |
-| Thiết bị | Notification Schedule | Lịch thông báo local game đã hẹn: giờ nổ, đếm ngược, kiểu hẹn, chu kỳ lặp (không có nội dung) | Menu ⋯ |
+| Thiết bị | Notification Schedule | Lịch thông báo local game đã hẹn: giờ nổ, đếm ngược, kiểu hẹn, chu kỳ lặp (không có nội dung); tab **Đang hiển thị**: noti đang hiện trên máy với giờ bắn, loại (`campaignId`), tiêu đề, nội dung; tab **Đã ghi**: noti đã thấy từ lúc Start kể cả khi bị vuốt bỏ, lưu thêm vào `Notifications/*.txt` | Menu ⋯ |
+| Thiết bị | Bộ nhớ game (meminfo) | `dumpsys meminfo` của game: TOTAL PSS/RSS/Swap, Java/Native heap, Graphics, số Activity/View/Binder, RAM trống của máy, xu hướng theo thời gian | Menu ⋯ |
+| Thiết bị | Hiệu năng game | FPS, frame giật, CPU, RAM, nhiệt độ/throttle, pin theo thời gian; vạch crash và event Firebase trên biểu đồ; xuất CSV | Menu ⋯ |
 | Thiết bị | Mirror Screen | Chiếu màn hình điện thoại lên Mac bằng scrcpy; tự cài qua Homebrew nếu chưa có | Menu ⋯ |
 | Thiết bị | Chụp / Quay màn hình | Lưu PNG / MP4 (tối đa 3 phút, không có tiếng), copy vào clipboard; chọn thư mục lưu | Nút Chụp, Quay; menu ⋯ |
 | App | Giao diện | Hệ thống / Sáng / Tối; tự co theo cỡ cửa sổ (một hàng công cụ khi rộng, nhiều hàng khi hẹp) | Góc phải trên |
@@ -51,6 +54,25 @@ Chỉ cần làm một lần cho mỗi bản tải mới. Build bằng `Build an
 1. Cài Xcode Command Line Tools (`xcode-select --install`).
 2. Double-click `Build and Install.command`. App được build, ký ad-hoc và cài vào `~/Applications`.
 
+## Hiệu năng
+Số đo trên Moto G06 Power, bản release, 3 luồng bơm log liên tục (khoảng vài trăm event/giây), danh sách đang mở, 30 giây (12 giây đầu app ở trước, sau đó chuyển sang app khác rồi quay lại):
+
+| | CPU của app | RAM sau 40 giây |
+| --- | --- | --- |
+| 0.6.7 | ~83% liên tục, kể cả khi app ở nền | ~150 MB |
+| 0.6.8 | ~20% | ~120 MB |
+| Nhàn rỗi (không có log) | 0,0–0,3% | ~140 MB |
+
+Đã tối ưu ở 0.6.8:
+- Danh sách thiết bị và trạng thái chỉ cập nhật khi có thay đổi thật; trước đây cứ 3 giây cả cửa sổ bị vẽ lại một lần, kể cả khi app ở nền, nên quay lại app bị giật.
+- Kết quả lọc/tìm kiếm được cache (trước đây lọc lại tối đa 50.000 event khoảng 8 lần mỗi lần vẽ); số đếm crash cũng được cache.
+- Mỗi dòng event là một view `Equatable`: dòng không đổi được bỏ qua khi có log mới, thay vì vẽ lại mọi dòng đang hiện.
+- Chuỗi giờ `HH:mm:ss.SSS` tính một lần khi tạo event (trước đây format lại mỗi lần vẽ).
+- Khi app ở nền, danh sách cập nhật mỗi 1 giây (thay vì 100 ms); log vẫn được nhận đầy đủ, chỉ gộp lại để vẽ.
+- Tiến trình chỉnh thanh cuộn chỉ chạy khi cửa sổ đang ở trước, 2 giây một lần (trước đây 0,5 giây, kể cả ở nền).
+
+Cách đo lại: chạy `adb shell` một vòng lặp `log -t FA "Logging event: origin=app,name=perf_test,params=Bundle[{...}]"` trên máy, bấm Bắt đầu, theo dõi `top -pid <PID de app>`; dùng `sample <PID> 5` để xem hàm nào đang chiếm CPU.
+
 ## Giới hạn
 - Chỉ đọc tag `FA` và `FA-SVC`. Event ở tag khác sẽ không hiện.
 - Giờ hiển thị là giờ SDK ghi log trên máy, không phải giờ server nhận.
@@ -66,3 +88,16 @@ Chỉ cần làm một lần cho mỗi bản tải mới. Build bằng `Build an
 Mỗi bản phát hành có tag trùng số version. Source của bản `X.Y.Z` nằm ở `https://github.com/TKieuTho/logcat-app/tree/vX.Y.Z` (ví dụ [v0.5.3](https://github.com/TKieuTho/logcat-app/tree/v0.5.3)); file zip nằm ở [Releases](https://github.com/TKieuTho/logcat-app/releases). Số version của bản đang chạy hiển thị cạnh tên app.
 
 Lịch sử thay đổi: xem [CHANGELOG.md](CHANGELOG.md).
+
+## Chạy test
+
+```
+swift test
+```
+
+Máy chỉ có Command Line Tools (không có Xcode) thì dùng swift-testing với cờ:
+
+```
+D=/Library/Developer/CommandLineTools/Library/Developer
+swift test -Xswiftc -F$D/Frameworks -Xlinker -F$D/Frameworks -Xlinker -rpath -Xlinker $D/Frameworks -Xlinker -rpath -Xlinker $D/usr/lib
+```

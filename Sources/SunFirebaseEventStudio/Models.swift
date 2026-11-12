@@ -18,13 +18,13 @@ struct EventParam: Hashable {
     var isInternal: Bool { key.hasPrefix("ga_") || key.hasPrefix("firebase_event_origin") || key.hasPrefix("firebase_screen") || key.hasPrefix("firebase_previous") }
 }
 
-enum LogKind: String, Hashable { case event, userProperty }
+enum LogKind: String, Hashable { case event, userProperty, crash }
 
 enum KindFilter: String, CaseIterable, Identifiable {
-    case all = "All", events = "Events", properties = "User Props"
+    case all = "All", events = "Events", properties = "User Props", crashes = "Crashes"
     var id: String { rawValue }
     func allows(_ k: LogKind) -> Bool {
-        switch self { case .all: return true; case .events: return k == .event; case .properties: return k == .userProperty }
+        switch self { case .all: return true; case .events: return k == .event; case .properties: return k == .userProperty; case .crashes: return k == .crash }
     }
 }
 
@@ -39,15 +39,21 @@ struct LogEvent: Identifiable, Hashable {
     let params: [EventParam]
     /// Lowercased "name key=value ..." used by search.
     let blob: String
+    var crash: CrashInfo?
+    /// Happened before the recording started (read back from the phone's old log / DropBox), not seen live.
+    var beforeStart = false
 
-    init(date: Date, deviceSerial: String, tag: String, raw: String, name: String, params: [EventParam], kind: LogKind = .event) {
+    init(date: Date, deviceSerial: String, tag: String, raw: String, name: String, params: [EventParam], kind: LogKind = .event, crash: CrashInfo? = nil) {
         self.kind = kind
+        self.crash = crash
+        self.clock = Self.clockFormatter.string(from: date)
         self.date = date; self.deviceSerial = deviceSerial; self.tag = tag; self.raw = raw
         self.name = name; self.params = params
-        self.blob = ([name] + params.map { "\($0.key)=\($0.value)" }).joined(separator: " ")
+        self.blob = ([name] + params.map { "\($0.key)=\($0.value)" } + (crash == nil ? [] : [raw])).joined(separator: " ")
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
     }
-    var clock: String { Self.clockFormatter.string(from: date) }
+    /// Formatted once at creation; formatting a date per row per render was a large share of the UI cost.
+    let clock: String
     static let clockFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss.SSS"
@@ -57,6 +63,7 @@ struct LogEvent: Identifiable, Hashable {
     /// Plain text with event name and every parameter, for copy/paste into bug reports.
     var copyText: String {
         if kind == .userProperty { return "\(name) = \(params.first?.value ?? "")" }
+        if kind == .crash { return raw }
         return ([name] + params.map { "\($0.key) = \($0.value)" }).joined(separator: "\n")
     }
 
@@ -299,4 +306,225 @@ final class UploadDumpParser: @unchecked Sendable {
         if let f = body.first, f != " ", body != "batch {" { app = nil; props = []; cur = nil }
         return nil
     }
+}
+
+/// One notification currently shown on the phone (from `dumpsys notification`).
+struct ActiveNotification: Identifiable, Hashable {
+    let id = UUID()
+    let package: String
+    let channel: String
+    let title: String
+    let text: String
+    /// When it was first posted, and when it was last updated (the app may keep refreshing it).
+    let posted: Date
+    let updated: Date
+    let ongoing: Bool
+    /// Game campaign that scheduled it (e.g. COMEBACK_2H, MORNING_ROUTINE), and the time it was meant to fire.
+    let campaign: String
+    let scheduledFire: Date?
+    /// System notification key (package, id, tag, uid); with `posted` it identifies one post across polls.
+    let key: String
+    var logID: String { "\(key)|\(Int(posted.timeIntervalSince1970 * 1000))" }
+
+    var wasUpdated: Bool { updated.timeIntervalSince(posted) > 2 }
+    var copyText: String {
+        "\(ScheduledAlarm.fullFormatter.string(from: posted))  \(campaign.isEmpty ? package : campaign)  \(title)  \(text)" + (wasUpdated ? "  (cập nhật \(ScheduledAlarm.fullFormatter.string(from: updated)))" : "")
+    }
+}
+
+enum ActiveNotificationParser {
+    /// Parses `adb shell dumpsys notification --noredact`; newest first.
+    static func parse(dump: String) -> [ActiveNotification] {
+        guard let start = dump.range(of: "Notification List:") else { return [] }
+        var section = dump[start.upperBound...]
+        if let end = section.range(of: "Snoozed notifications") { section = section[..<end.lowerBound] }
+        let records = section.components(separatedBy: "NotificationRecord(").dropFirst()
+        func field(_ r: String, _ key: String) -> String? {
+            guard let k = r.range(of: key) else { return nil }
+            return String(r[k.upperBound...].prefix { !$0.isWhitespace && $0 != ")" })
+        }
+        func text(_ r: String, _ key: String) -> String {
+            guard let line = r.components(separatedBy: "\n").first(where: { $0.contains(key + "=") }),
+                  let open = line.firstIndex(of: "("), let close = line.lastIndex(of: ")"), open < close else { return "" }
+            return String(line[line.index(after: open)..<close])
+        }
+        func date(_ r: String, _ key: String) -> Date? {
+            field(r, key + "=").flatMap(Double.init).map { Date(timeIntervalSince1970: $0 / 1000) }
+        }
+        return records.compactMap { r in
+            guard let pkg = field(r, "pkg="), let posted = date(r, "mCreationTimeMs") else { return nil }
+            let flags = r.components(separatedBy: "flags=").dropFirst().first?.prefix { !$0.isWhitespace } ?? ""
+            var campaign = field(r, "\"campaignId\":\"").map { String($0.prefix { $0 != "\"" }) } ?? ""
+            if campaign.isEmpty, let g = r.range(of: "|g:") {
+                let key = String(r[g.upperBound...].prefix { !$0.isWhitespace })
+                if key != "ranker_group", !key.hasPrefix("Aggregate") { campaign = key }
+            }
+            let fire = field(r, "fireTime=Long (").flatMap(Double.init).map { Date(timeIntervalSince1970: $0 / 1000) }
+            return ActiveNotification(package: pkg, channel: field(r, "channel=") ?? "",
+                                      title: text(r, "android.title"), text: text(r, "android.text"),
+                                      posted: posted, updated: date(r, "mUpdateTimeMs") ?? posted,
+                                      ongoing: flags.contains("ONGOING_EVENT"), campaign: campaign, scheduledFire: fire,
+                                      key: r.components(separatedBy: "\n").first { $0.hasPrefix("      key=") }.map { String($0.dropFirst(10)) } ?? "\(pkg)|\(posted.timeIntervalSince1970)")
+        }
+        .sorted { $0.posted > $1.posted }
+    }
+}
+
+
+/// A notification the app saw on the phone while recording; it stays here after the user swipes it away.
+struct LoggedNotification: Identifiable, Hashable {
+    var id: String { serial + "|" + notification.logID }
+    let serial: String
+    let notification: ActiveNotification
+    var goneAt: Date?
+}
+
+/// `dumpsys meminfo <package>` boiled down to the numbers that matter for a leak / OOM check.
+struct MemInfoSnapshot {
+    struct Row: Identifiable { let name: String; let pssKB: Int; var id: String { name } }
+    var package = ""
+    var running = false
+    var pid = ""
+    var rows: [Row] = []
+    var totalPSS = 0, totalRSS = 0, swapPSS = 0
+    var objects: [(name: String, count: Int)] = []
+    var deviceLines: [String] = []
+    var raw = ""
+    var date = Date()
+}
+
+enum MemInfoParser {
+    static func parse(package: String, app: String, device: String) -> MemInfoSnapshot {
+        var m = MemInfoSnapshot(); m.package = package; m.raw = app
+        m.deviceLines = device.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard !app.contains("No process found"), app.contains("MEMINFO in pid") else { return m }
+        m.running = true
+        func int(_ s: String) -> Int { Int(s.replacingOccurrences(of: ",", with: "")) ?? 0 }
+        func first(_ pattern: String, in s: String) -> String? {
+            guard let re = try? NSRegularExpression(pattern: pattern), let r = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)),
+                  r.numberOfRanges > 1, let g = Range(r.range(at: 1), in: s) else { return nil }
+            return String(s[g])
+        }
+        m.pid = first(#"MEMINFO in pid (\d+)"#, in: app) ?? ""
+        m.totalPSS = int(first(#"TOTAL PSS:\s+(\d+)"#, in: app) ?? "0")
+        m.totalRSS = int(first(#"TOTAL RSS:\s+(\d+)"#, in: app) ?? "0")
+        m.swapPSS = int(first(#"TOTAL SWAP PSS:\s+(\d+)"#, in: app) ?? "0")
+        let rowRE = try? NSRegularExpression(pattern: #"^\s*([A-Za-z][A-Za-z ]*?):\s+(\d+)(?:\s+\d+)?\s*$"#)
+        let pairRE = try? NSRegularExpression(pattern: #"([A-Za-z][A-Za-z ]*?):\s+(\d+)"#)
+        var section = ""
+        for line in app.components(separatedBy: "\n") {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t == "App Summary" || t == "Objects" || t.hasPrefix("SQL") || t.hasPrefix("DATABASES") || t.hasPrefix("Unreachable") { section = t; continue }
+            if section == "App Summary", let re = rowRE, let r = re.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+               let a = Range(r.range(at: 1), in: line), let b = Range(r.range(at: 2), in: line) {
+                m.rows.append(.init(name: String(line[a]), pssKB: int(String(line[b]))))
+            }
+            if section == "Objects", let re = pairRE {
+                for r in re.matches(in: line, range: NSRange(line.startIndex..., in: line)) {
+                    if let a = Range(r.range(at: 1), in: line), let b = Range(r.range(at: 2), in: line) {
+                        m.objects.append((String(line[a]).trimmingCharacters(in: .whitespaces), int(String(line[b]))))
+                    }
+                }
+            }
+        }
+        return m
+    }
+}
+
+
+/// One reading of the running game: frame rate, CPU, RAM, temperature, battery.
+struct PerfSample: Identifiable {
+    let id = UUID()
+    let date: Date
+    var running = false
+    var fps: Double?
+    /// Share of frames that took longer than 1.5 refresh periods, and the slowest frame.
+    var jankPct: Double?
+    var maxFrameMs: Double?
+    /// Timestamp (phone monotonic clock, ns) of the newest frame; equal to the previous sample's means nothing new was drawn.
+    var lastFrameNs: Double?
+    /// % of ONE core (100 = one core fully busy; the phone has `cores` of them).
+    var cpu: Double?
+    var cores = 8
+    var rssMB: Double?
+    var threads: Int?
+    var cpuTemp: Double?
+    var batteryTemp: Double?
+    var battery: Int?
+    var thermalStatus: Int?
+}
+
+enum PerfParser {
+    /// Parses the output of `ADBService.fetchPerf`. Returns the sample and the SurfaceFlinger layer to reuse next time.
+    static func parse(_ out: String, date: Date = Date()) -> (sample: PerfSample, layer: String?) {
+        var sections: [String: [String]] = [:]
+        var cur = ""
+        for line in out.components(separatedBy: "\n") {
+            if line.hasPrefix("---") { cur = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces); sections[cur] = []; continue }
+            sections[cur, default: []].append(line.trimmingCharacters(in: CharacterSet(charactersIn: "\r")))
+        }
+        var s = PerfSample(date: date)
+        func num(_ pattern: String, in text: String) -> Double? {
+            guard let re = try? NSRegularExpression(pattern: pattern), let m = re.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+                  m.numberOfRanges > 1, let r = Range(m.range(at: 1), in: text) else { return nil }
+            return Double(text[r])
+        }
+        // --- phone-wide
+        let thermal = (sections["THERMAL"] ?? []).joined(separator: "\n")
+        s.thermalStatus = num(#"Thermal Status: (\d+)"#, in: thermal).map(Int.init)
+        s.cpuTemp = num(#"mValue=([\d.]+), mType=\d+, mName=CPU"#, in: thermal)
+        let batt = (sections["BATT"] ?? []).joined(separator: "\n")
+        s.battery = num(#"level: (\d+)"#, in: batt).map(Int.init)
+        s.batteryTemp = num(#"temperature: (\d+)"#, in: batt).map { $0 / 10 }
+
+        let pid = (sections["PID"] ?? []).first?.trimmingCharacters(in: .whitespaces) ?? ""
+        guard !pid.isEmpty else { return (s, nil) }
+        s.running = true
+        // --- process
+        let top = (sections["TOP"] ?? []).joined(separator: "\n")
+        if let c = num(#"(\d+)%cpu"#, in: top) { s.cores = max(1, Int(c) / 100) }
+        for line in (sections["TOP"] ?? []) {
+            let f = line.split(whereSeparator: \.isWhitespace).map(String.init)
+            if f.first == pid, let i = f.firstIndex(where: { $0.count == 1 && $0.first!.isLetter && $0.first!.isUppercase }), i + 1 < f.count {
+                s.cpu = Double(f[i + 1].replacingOccurrences(of: "[", with: "").replacingOccurrences(of: "]", with: ""))
+            }
+        }
+        let status = (sections["STATUS"] ?? []).joined(separator: "\n")
+        s.rssMB = num(#"VmRSS:\s+(\d+)"#, in: status).map { $0 / 1024 }
+        s.threads = num(#"Threads:\s+(\d+)"#, in: status).map(Int.init)
+        // --- frames
+        let layer = (sections["LAYER"] ?? []).first?.trimmingCharacters(in: .whitespaces)
+        let lat = sections["LAT"] ?? []
+        if let period = lat.first.flatMap({ Double($0.trimmingCharacters(in: .whitespaces)) }), period > 0 {
+            let t = lat.dropFirst().compactMap { l -> Double? in
+                let f = l.split(whereSeparator: \.isWhitespace)
+                guard f.count == 3, let v = Double(f[1]), v > 0, v < 9e18 else { return nil }
+                return v
+            }
+            if t.count > 2 {
+                let span = (t.last! - t.first!) / 1e9
+                let gaps = zip(t, t.dropFirst()).map { ($1 - $0) / 1e6 }
+                s.lastFrameNs = t.last
+                if span > 0.2 {
+                    s.fps = Double(t.count - 1) / span
+                    s.jankPct = Double(gaps.filter { $0 > period * 1.5 / 1e6 }.count) / Double(gaps.count) * 100
+                    s.maxFrameMs = gaps.max()
+                }
+            } else if layer?.isEmpty == false { s.fps = 0 }
+        }
+        return (s, (layer?.isEmpty ?? true) ? nil : layer)
+    }
+}
+
+
+/// When recording on one phone began (on the same clock the log lines use), and what interrupted it.
+struct RecordingSession {
+    let serial: String
+    let game: GamePackage
+    /// First line of the recording, taken from the marker the app writes into the phone's log: same clock as every event time.
+    var startLog: Date
+    let startMac: Date
+    var stoppedMac: Date?
+    var lostMac: Date?
+    var gapText: String?
 }

@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @EnvironmentObject private var model: StudioModel
     @State private var showDeviceBufferWarning = false
+    @State private var showResetConfirm = false
     @AppStorage("appearance") private var appearance = "light"
     private var scheme: ColorScheme? { appearance == "light" ? .light : appearance == "dark" ? .dark : nil }
 
@@ -14,7 +15,7 @@ struct ContentView: View {
             Divider()
             controls
             Divider()
-            // Split view down to 640px wide (always there, placeholder until an event is picked).
+            // Split view down to 640px wide; the details panel stays collapsed until an event is clicked (or the edge handle is used).
             // Below that the details are a drawer that slides over the list and stays closed until opened.
             GeometryReader { geo in
                 let wide = geo.size.width >= 640
@@ -66,6 +67,12 @@ struct ContentView: View {
         } message: {
             Text("Khác với Clear View: lệnh này chạy logcat -c trên máy đang chọn và xóa toàn bộ log hiện có của máy.")
         }
+        .alert("Xoá toàn bộ dữ liệu phiên?", isPresented: $showResetConfirm) {
+            Button("Hủy", role: .cancel) {}
+            Button("Xoá hết", role: .destructive) { model.resetSession() }
+        } message: {
+            Text("Xoá mọi event, crash, noti đã ghi, mẫu hiệu năng và bộ nhớ đang có trong app. Log trên điện thoại và các file đã lưu (Crashes, Notifications) giữ nguyên.")
+        }
         .alert("Có bản cập nhật Logcat", isPresented: $model.showUpdateAlert) {
             Button("Để sau", role: .cancel) {}
             Button("Cập nhật ngay") { model.installUpdate() }
@@ -87,7 +94,45 @@ struct ContentView: View {
                  ? "Máy chưa có scrcpy (công cụ mã nguồn mở dùng để chiếu màn hình Android). App sẽ chạy \"brew install scrcpy\", mất vài phút."
                  : "Máy chưa có scrcpy và cũng chưa có Homebrew. Cài Homebrew (brew.sh) rồi chạy: brew install scrcpy. Bấm nút bên dưới để mở hướng dẫn.")
         }
-        .sheet(isPresented: $model.showNotificationSchedule) { NotificationScheduleView().environmentObject(model) }
+        .overlay {
+            // Not a .sheet: a sheet ignores clicks outside it, and here a click on the dimmed backdrop closes it.
+            if model.showNotificationSchedule {
+                ZStack {
+                    Color.black.opacity(0.35).ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture { model.showNotificationSchedule = false }
+                    NotificationScheduleView().environmentObject(model)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .shadow(color: .black.opacity(0.35), radius: 24, y: 8)
+                        .padding(28)
+                }
+                .transition(.opacity)
+            }
+            if model.showPerf {
+                ZStack {
+                    Color.black.opacity(0.35).ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture { model.closePerformance() }
+                    PerformanceView().environmentObject(model)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .shadow(color: .black.opacity(0.35), radius: 24, y: 8)
+                        .padding(28)
+                }
+                .transition(.opacity)
+            }
+            if model.showMeminfo {
+                ZStack {
+                    Color.black.opacity(0.35).ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture { model.closeMeminfo() }
+                    MeminfoView().environmentObject(model)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .shadow(color: .black.opacity(0.35), radius: 24, y: 8)
+                        .padding(28)
+                }
+                .transition(.opacity)
+            }
+        }
         .onAppear { model.checkForUpdates(manual: false) }
         .alert("Logcat", isPresented: Binding(
             get: { model.errorMessage != nil }, set: { if !$0 { model.errorMessage = nil } }
@@ -166,6 +211,7 @@ struct ContentView: View {
     private var controls: some View {
         ViewThatFits(in: .horizontal) {
             fullBar.padding(14)
+            mediumLabeledBar.padding(12)
             mediumBar.padding(10)
             narrowBar.padding(10)
             narrowestBar.padding(8)
@@ -193,33 +239,28 @@ struct ContentView: View {
 
     private var moreMenu: some View {
         Menu {
-            Button(model.isInstallingScrcpy ? "Đang cài scrcpy…" : model.isMirroringSelected ? "Stop Mirroring" : "Mirror Screen", systemImage: "iphone.gen3") { model.toggleMirror() }
-                .disabled(!deviceReady || model.isInstallingScrcpy)
-            Button("Notification Schedule…", systemImage: "bell.badge") { model.openNotificationSchedule() }
-                .disabled(!deviceReady)
-            Button("Restart Game…", systemImage: "arrow.clockwise") { model.showLaunchConfirmation = true }
-                .disabled(!deviceReady)
-            Divider()
             Button("Thư mục lưu ảnh/video: \(model.captureDirectoryName)…", systemImage: "folder") { model.chooseCaptureDirectory() }
                 .help("Chọn thư mục lưu ảnh chụp và video quay màn hình")
             if model.usesCustomCaptureDirectory {
                 Button("Dùng lại thư mục Downloads", systemImage: "arrow.uturn.backward") { model.resetCaptureDirectory() }
             }
             Divider()
+            Button("Mở thư mục Crashes", systemImage: "folder.badge.gearshape") { model.revealCrashFolder() }
+            Button("Mở thư mục Notifications", systemImage: "bell") { model.revealNotificationFolder() }
+            Divider()
+            Button("Dọn tiến trình cũ", systemImage: "wand.and.stars") { model.cleanupStaleProcesses(manual: true) }
+                .help("Kill các adb logcat bị bỏ mồ côi trên Mac và logcat còn chạy trên điện thoại (không đụng tới phiên đang ghi)")
+            Button("Xoá toàn bộ dữ liệu phiên…", systemImage: "trash.slash") { showResetConfirm = true }
+                .help("Xoá event, crash, noti đã ghi, mẫu hiệu năng và bộ nhớ trong app. Log trên máy và file đã lưu giữ nguyên")
             Button("Clear View Only", systemImage: "eraser") { model.clearVisibleEvents() }
                 .help("Chỉ xóa danh sách trong app, không xóa log trên máy")
             Button("Clear Device Log Buffer…", systemImage: "trash", role: .destructive) { showDeviceBufferWarning = true }
                 .help("Xóa log trong bộ nhớ của điện thoại (adb logcat -c), có cảnh báo")
             Divider()
-            Button("Copy Visible Logs", systemImage: "doc.on.doc") { model.copyVisibleEvents() }
-                .help("Copy các event đang hiển thị")
-            Button("Export Visible Logs…", systemImage: "square.and.arrow.up") { model.exportVisibleEvents() }
-                .help("Xuất các event đang hiển thị ra file")
-            Divider()
             Button("Check for Updates…", systemImage: "arrow.triangle.2.circlepath") { model.checkForUpdates(manual: true) }
                 .help("Kiểm tra bản mới; có bản mới thì bấm Cập nhật ngay để app tự thay")
         } label: { Image(systemName: "ellipsis.circle").font(.title3) }
-        .help("Thêm: thư mục lưu ảnh/video, xóa log trên máy, kiểm tra cập nhật…")
+        .help("Thêm: thư mục lưu, mở thư mục Crashes/Notifications, xóa log trên máy, kiểm tra cập nhật")
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().frame(height: 26)
     }
 
@@ -252,20 +293,28 @@ struct ContentView: View {
                     Text("GAME PACKAGE").font(.caption2.bold()).foregroundStyle(.secondary)
                     gamePicker(compact: false)
                 }
-                HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("GHI LOG").font(.caption2.bold()).foregroundStyle(.secondary)
                     Button { model.isStreaming ? model.stopSession() : model.startSession() } label: {
                         Label(model.isStreaming ? "Dừng" : "Bắt đầu", systemImage: model.isStreaming ? "stop.fill" : "play.fill")
                     }
                     .buttonStyle(.borderedProminent).tint(model.isStreaming ? .red : Theme.accent)
                     .help(model.isStreaming ? "Dừng ghi log" : "Bật debug Firebase cho máy và game đang chọn (hỏi một lần nếu cần) rồi ghi log từ lúc bấm")
                     .disabled(!model.isStreaming && !deviceReady)
-                    Divider().frame(height: 18)
-                    toolIcons
-                    Divider().frame(height: 18)
-                    logIcons
-                    moreMenu
+                    .frame(height: 26)
                 }
-                .frame(height: 26)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("THEO DÕI GAME").font(.caption2.bold()).foregroundStyle(.secondary)
+                    monitorButtons(labels: true).frame(height: 26)
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("MÁY").font(.caption2.bold()).foregroundStyle(.secondary)
+                    toolIcons.frame(height: 26)
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("LOG").font(.caption2.bold()).foregroundStyle(.secondary)
+                    HStack(spacing: 8) { logIcons; moreMenu }.frame(height: 26)
+                }
                 Spacer(minLength: 0)
             }
             searchBar(compact: false)
@@ -288,8 +337,26 @@ struct ContentView: View {
                        tint: model.isRecordingSelected ? .red : nil, enabled: deviceReady) { model.toggleRecording() }
             iconButton("iphone.gen3", help: model.isMirroringSelected ? "Stop Mirroring" : "Mirror Screen: chiếu màn hình điện thoại lên Mac (scrcpy)",
                        tint: model.isMirroringSelected ? Theme.green : nil, enabled: deviceReady && !model.isInstallingScrcpy) { model.toggleMirror() }
-            iconButton("bell.badge", help: "Notification Schedule: lịch thông báo game đã hẹn trên máy", enabled: deviceReady) { model.openNotificationSchedule() }
             iconButton("arrow.clockwise", help: "Restart Game: force-stop và mở lại game để nhận debug mode (có xác nhận)", enabled: deviceReady) { model.showLaunchConfirmation = true }
+        }
+    }
+
+    /// The three "watch the game" windows. Wide bar: icon + name; narrower bars: icon only (tooltip has the name).
+    private func monitorButtons(labels: Bool) -> some View {
+        let items: [(String, String, String, () -> Void)] = [
+            ("gauge.with.dots.needle.67percent", "Hiệu năng", "Hiệu năng: FPS, giật hình, CPU, RAM, nhiệt độ, pin theo thời gian, có vạch crash và event Firebase", { model.openPerformance() }),
+            ("memorychip", "Bộ nhớ", "Bộ nhớ: dumpsys meminfo của game (PSS, heap, Activity/View, RAM máy)", { model.openMeminfo() }),
+            ("bell.badge", "Thông báo", "Thông báo: lịch đã hẹn, đang hiển thị trên máy và đã ghi (kể cả đã xoá), kèm loại noti của game", { model.openNotificationSchedule() }),
+        ]
+        return HStack(spacing: 6) {
+            ForEach(items, id: \.1) { item in
+                if labels {
+                    Button(action: item.3) { Label(item.1, systemImage: item.0).font(.system(size: 12)) }
+                        .buttonStyle(.bordered).controlSize(.small).help(item.2).disabled(!deviceReady)
+                } else {
+                    iconButton(item.0, help: item.2, enabled: deviceReady, action: item.3)
+                }
+            }
         }
     }
 
@@ -307,7 +374,28 @@ struct ContentView: View {
             Divider().frame(height: 18)
             toolIcons
             Divider().frame(height: 18)
+            monitorButtons(labels: false)
+            Divider().frame(height: 18)
             logIcons
+        }
+    }
+
+    /// Between wide and medium: two rows, so the three monitor buttons keep their names instead of becoming look-alike icons.
+    private var mediumLabeledBar: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                devicePicker(compact: true)
+                gamePicker(compact: true)
+                Divider().frame(height: 18)
+                primaryIcons
+                toolIcons
+                Divider().frame(height: 18)
+                monitorButtons(labels: true)
+                Divider().frame(height: 18)
+                logIcons
+                moreMenu
+            }
+            searchBar(compact: true)
         }
     }
 
@@ -361,13 +449,68 @@ struct ContentView: View {
             .disabled(!enabled)
     }
 
+    private var crashTotal: Int { model.crashCounts.values.reduce(0, +) }
+
+    /// Kind chips (multi-select, none selected = all) and the "All apps" switch; only while the Crashes filter is on.
+    /// Wide: icon + name + count. Narrow: icon + count only, then the chips scroll sideways rather than wrap.
+    private var crashBar: some View {
+        let counts = model.crashCounts
+        func chip(_ k: CrashKind, labels: Bool) -> some View {
+            let on = model.crashKinds.contains(k)
+            let n = counts[k]
+            return Button { if on { model.crashKinds.remove(k) } else { model.crashKinds.insert(k) } } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: k.symbol).font(.system(size: 10))
+                    if labels { Text(k.rawValue) }
+                    if let n { Text("\(n)").font(.system(size: 10, weight: .bold).monospacedDigit()) }
+                }
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1).fixedSize()
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .foregroundStyle(on ? Color.white : (n == nil ? Color.secondary : Color.primary))
+                .background(on ? Color.red.opacity(0.85) : (n == nil ? Color.clear : Color.red.opacity(0.14)), in: Capsule())
+                .overlay(Capsule().stroke(Color.primary.opacity(on || n != nil ? 0 : 0.15)))
+            }.buttonStyle(.plain).help("\(k.hint)" + (n.map { " · \($0)" } ?? ""))
+        }
+        func chips(labels: Bool) -> some View {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 5) { ForEach(CrashKind.allCases) { chip($0, labels: labels) } }
+            }
+        }
+        let tail = HStack(spacing: 8) {
+            Toggle("All apps", isOn: $model.crashAllApps).toggleStyle(.checkbox).font(.caption).controlSize(.small).fixedSize()
+                .help("Bật: hiện crash của mọi app trên máy. Tắt: chỉ game đang ghi log (và process bị kill của nó)")
+            Button { if let sr = model.selectedSerial { model.loadCrashHistory(sr, game: model.selectedGame, manual: true) } } label: {
+                Label("Quét crash cũ", systemImage: "clock.arrow.circlepath").font(.caption).labelStyle(.titleAndIcon)
+            }
+            .buttonStyle(.borderless).disabled(!deviceReady)
+            .help("Đọc lại buffer crash của logcat và DropBox: crash xảy ra trước khi bấm Bắt đầu (cũng tự chạy mỗi lần Bắt đầu)")
+            Button { model.revealCrashFolder() } label: { Image(systemName: "folder").font(.caption) }
+                .buttonStyle(.borderless).help("Mở thư mục Crashes (file tự lưu)")
+            Menu {
+                Toggle("Ghi crash / exception", isOn: $model.crashCapture)
+                    .help("Bắt Fatal, Native, ANR, Unity, process died, OOM. Áp dụng từ lần Bắt đầu kế tiếp")
+                Toggle("Tự lưu crash ra file", isOn: $model.crashAutoSave)
+            } label: { Image(systemName: "gearshape").font(.caption) }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Cài đặt ghi crash")
+        }
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) { chips(labels: true).fixedSize(); Spacer(minLength: 4); tail }
+            HStack(spacing: 8) { chips(labels: false).fixedSize(); Spacer(minLength: 4); tail }
+            HStack(spacing: 8) { chips(labels: false); tail }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 6)
+    }
+
     private func listHeader(compact: Bool) -> some View {
         HStack {
                 if !compact { Text("EVENTS").font(.caption.bold()).foregroundStyle(.secondary).lineLimit(1).fixedSize() }
                 Spacer()
                 Picker("", selection: $model.kindFilter) {
-                    ForEach(KindFilter.allCases) { Text($0.rawValue).tag($0) }
-                }.pickerStyle(.segmented).labelsHidden().frame(width: 220).help("Lọc danh sách: tất cả, chỉ event, hoặc chỉ user property")
+                    ForEach(KindFilter.allCases) { f in
+                        Text(f == .crashes && crashTotal > 0 ? "Crashes \(crashTotal)" : f.rawValue).tag(f)
+                    }
+                }.pickerStyle(.segmented).labelsHidden().frame(width: 300).help("Lọc danh sách: tất cả, event, user property, hoặc crash/exception")
                 Picker("", selection: $model.detailedList) {
                     Image(systemName: "list.bullet").tag(false)
                     Image(systemName: "rectangle.grid.1x2").tag(true)
@@ -389,6 +532,8 @@ struct ContentView: View {
                 listHeader(compact: true)
             }
             Divider()
+            if !model.sessions.isEmpty { sessionBanner; Divider() }
+            if model.kindFilter == .crashes { crashBar; Divider() }
             if model.kindFilter == .properties { PropertySnapshotSection() }   // pinned: only the history below scrolls
             ScrollViewReader { proxy in
                 // Custom rows instead of List selection: the system highlight is saturated blue and recolors the text.
@@ -396,24 +541,31 @@ struct ContentView: View {
                     LazyVStack(spacing: 0) {
                         ForEach(model.visibleEvents) { event in
                             let selected = model.selectedEventID == event.id
-                            VStack(spacing: 0) {
-                                Group {
-                                    if model.detailedList { card(event) } else { compactRow(event) }
+                            let detailed = model.detailedList
+                            // Equatable wrapper: SwiftUI skips a row whose event / selection / mode did not change,
+                            // so a burst of new log lines no longer re-runs the body of every visible row.
+                            EquatableRow(id: event.id, selected: selected, detailed: detailed) {
+                                AnyView(VStack(spacing: 0) {
+                                    Group {
+                                        if detailed { card(event) } else { compactRow(event) }
+                                    }
+                                    .padding(.horizontal, 14).padding(.vertical, 6)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(selected ? Color.primary.opacity(0.03) : Color.clear)
+                                    .overlay(alignment: .leading) {
+                                        Rectangle().fill(Theme.accent).frame(width: 3).opacity(selected ? 1 : 0)
+                                    }
+                                    Divider().opacity(0.5)
                                 }
-                                .padding(.horizontal, 14).padding(.vertical, 6)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(selected ? Color.primary.opacity(0.03) : Color.clear)
-                                .overlay(alignment: .leading) {
-                                    Rectangle().fill(Theme.accent).frame(width: 3).opacity(selected ? 1 : 0)
-                                }
-                                Divider().opacity(0.5)
+                                .contentShape(Rectangle())
+                                .onTapGesture { model.selectedEventID = event.id; model.openDetail() })
                             }
-                            .contentShape(Rectangle())
-                            .onTapGesture { model.selectedEventID = event.id; model.openDetail() }
+                            .equatable()
                             .id(event.id)
                         }
                     }
                 }
+                .overlay { if model.visibleEvents.isEmpty { emptyState } }
                 .onChange(of: model.visibleEvents.last?.id) { id in
                     if model.autoScroll, let id { proxy.scrollTo(id, anchor: .bottom) }
                 }
@@ -421,13 +573,86 @@ struct ContentView: View {
         }
     }
 
+    /// What to do when the list is empty: say why, and what to press.
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            if !model.searchText.isEmpty {
+                Image(systemName: "magnifyingglass").font(.largeTitle).foregroundStyle(.tertiary)
+                Text("Không có kết quả cho \"\(model.searchText)\"").font(.headline)
+                Button("Xoá tìm kiếm") { model.searchText = "" }
+            } else if model.kindFilter != .all, !model.events.isEmpty {
+                Image(systemName: "line.3.horizontal.decrease.circle").font(.largeTitle).foregroundStyle(.tertiary)
+                Text("Không có mục nào ở bộ lọc \"\(model.kindFilter.rawValue)\"").font(.headline)
+                Button("Hiện tất cả") { model.kindFilter = .all }
+            } else if model.isStreaming {
+                ProgressView().controlSize(.small)
+                Text("Đang chờ event Firebase…").font(.headline)
+                Text("Chơi game trên máy, event sẽ hiện ở đây.").font(.callout).foregroundStyle(.secondary)
+            } else {
+                Image(systemName: "cable.connector.horizontal").font(.largeTitle).foregroundStyle(.tertiary)
+                Text("Chưa ghi log").font(.headline)
+                Text("1. Cắm điện thoại bằng USB   2. Chọn máy và game   3. Bấm Bắt đầu").font(.callout).foregroundStyle(.secondary)
+                Button { model.startSession() } label: { Label("Bắt đầu", systemImage: "play.fill") }
+                    .buttonStyle(.borderedProminent).disabled(!deviceReady)
+                if !deviceReady { Text("Chưa thấy máy nào sẵn sàng. Kiểm tra cáp và bật USB debugging.").font(.caption).foregroundStyle(.orange) }
+            }
+        }
+        .multilineTextAlignment(.center).padding(30)
+    }
+
+    private static let dayFormatter: DateFormatter = { let f = DateFormatter(); f.dateFormat = "dd/MM"; return f }()
+    /// Event time. One that happened before recording started also shows its date and a "trước Start" tag, so it is not mistaken for a live one.
+    @ViewBuilder private func clockText(_ event: LogEvent) -> some View {
+        HStack(spacing: 4) {
+            if event.beforeStart { Text(Self.dayFormatter.string(from: event.date)).font(.system(size: 11, design: .monospaced)).foregroundStyle(.tertiary) }
+            Text(event.clock).font(.system(size: 11, design: .monospaced)).foregroundStyle(event.beforeStart ? .tertiary : .secondary)
+            if event.beforeStart {
+                Text("trước Start").font(.system(size: 9, weight: .semibold))
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Color.orange.opacity(0.18), in: Capsule()).foregroundStyle(.orange)
+                    .help("Xảy ra trước khi bấm Bắt đầu: app đọc lại từ log cũ của máy")
+            }
+        }
+    }
+
+    /// Where recording started, per phone, on the same clock as the event times below.
+    private var sessionBanner: some View {
+        let list = model.sessions.values.sorted { $0.startMac < $1.startMac }
+        return VStack(alignment: .leading, spacing: 3) {
+            ForEach(list, id: \.serial) { s in
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    let end = s.stoppedMac ?? ctx.date
+                    HStack(spacing: 6) {
+                        Image(systemName: s.stoppedMac != nil ? "stop.circle.fill" : s.lostMac != nil ? "bolt.horizontal.circle.fill" : "record.circle.fill")
+                            .foregroundStyle(s.stoppedMac != nil ? Color.secondary : s.lostMac != nil ? .orange : Theme.green)
+                        Text(model.deviceLabel(s.serial)).fontWeight(.semibold)
+                        Text("· \(s.game.title)").foregroundStyle(.secondary)
+                        Text("· bắt đầu ghi \(LogEvent.clockFormatter.string(from: s.startLog).dropLast(4))").foregroundStyle(.secondary)
+                        Text("· \(s.stoppedMac != nil ? "đã ghi" : s.lostMac != nil ? "mất kết nối sau" : "đang ghi") \(ScheduledAlarm.duration(end.timeIntervalSince(s.startMac)))")
+                            .foregroundStyle(s.stoppedMac != nil ? Color.secondary : Theme.green)
+                        Spacer(minLength: 0)
+                    }.font(.caption)
+                }
+                if model.crashHistoryLoading.contains(s.serial) {
+                    HStack(spacing: 6) { ProgressView().controlSize(.mini); Text("Đang đọc crash cũ trên máy…").font(.caption2).foregroundStyle(.secondary) }.padding(.leading, 20)
+                }
+                if let g = s.gapText { Text(g).font(.caption2).foregroundStyle(.orange).padding(.leading, 20) }
+            }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 6)
+        .help("Giờ bắt đầu ghi cùng đồng hồ với giờ từng event. Event có nhãn \"trước Start\" xảy ra trước giờ này.")
+    }
+
     private func compactRow(_ event: LogEvent) -> some View {
         HStack(spacing: 10) {
-            Text(event.clock).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+            clockText(event)
             if event.kind == .userProperty { Image(systemName: "person.text.rectangle").font(.caption).foregroundStyle(Theme.accent) }
+            if let c = event.crash { Image(systemName: c.kind.symbol).font(.caption).foregroundStyle(.red) }
             Text(event.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
             Spacer()
-            if event.kind == .userProperty {
+            if let c = event.crash {
+                Text(c.kind.rawValue.uppercased()).font(.system(size: 9, weight: .bold)).foregroundStyle(.red)
+            } else if event.kind == .userProperty {
                 Text(event.params.first?.value ?? "").font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
             } else {
                 Text("\(event.params.filter { !$0.isInternal }.count) params").font(.caption).foregroundStyle(.tertiary)
@@ -438,7 +663,36 @@ struct ContentView: View {
     }
 
     /// Detailed view: each event is a card with its parameters shown inline as key/value chips.
+    private func crashCard(_ event: LogEvent, _ c: CrashInfo) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Image(systemName: c.kind.symbol).font(.caption).foregroundStyle(.red)
+                Text(c.kind.rawValue.uppercased()).font(.system(size: 9, weight: .bold)).padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Color.red.opacity(0.2), in: Capsule())
+                if !c.isGame { Text("OTHER APP").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary) }
+                Spacer()
+                clockText(event)
+                if let f = c.file {
+                    Button { NSWorkspace.shared.activateFileViewerSelecting([f]) } label: { Image(systemName: "folder").font(.caption) }
+                        .buttonStyle(.borderless).help("Hiện file đã lưu: \(f.lastPathComponent)")
+                }
+                Button { copy(event.copyText) } label: { Image(systemName: "doc.on.doc").font(.caption) }
+                    .buttonStyle(.borderless).help("Copy toàn bộ stacktrace")
+            }
+            Text(event.name).font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle([.fatal, .native, .anr, .unity, .oom].contains(c.kind) ? Color.red : Color.primary)
+                .lineLimit(3).frame(maxWidth: .infinity, alignment: .leading)
+            if let pkg = c.package { Text("\(pkg)  ·  pid \(c.pid ?? "?")").font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary) }
+        }
+        .padding(.vertical, 4)
+    }
+
     private func card(_ event: LogEvent) -> some View {
+        if let c = event.crash { return AnyView(crashCard(event, c)) }
+        return AnyView(plainCard(event))
+    }
+
+    private func plainCard(_ event: LogEvent) -> some View {
         let isProp = event.kind == .userProperty
         let shown = event.params.filter { !$0.isInternal }
         return VStack(alignment: .leading, spacing: 6) {
@@ -448,7 +702,7 @@ struct ContentView: View {
                 if isProp { Text("USER PROPERTY").font(.system(size: 9, weight: .bold)).padding(.horizontal, 5).padding(.vertical, 1)
                     .background(Theme.accent.opacity(0.2), in: Capsule()) }
                 Spacer()
-                Text(event.clock).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+                clockText(event)
                 Button { copy(event.copyText) } label: { Image(systemName: "doc.on.doc").font(.caption) }
                     .buttonStyle(.borderless).help("Copy event + all parameters")
             }
@@ -513,6 +767,10 @@ struct ContentView: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text(event.name).font(.title3.bold()).textSelection(.enabled)
                     Spacer()
+                    if let f = event.crash?.file {
+                        Button { NSWorkspace.shared.activateFileViewerSelecting([f]) } label: { Label("File", systemImage: "folder").font(.caption) }
+                            .buttonStyle(.bordered).controlSize(.small).help("Hiện file đã lưu: \(f.lastPathComponent)")
+                    }
                     Button { copy(event.copyText) } label: { Label("Copy", systemImage: "doc.on.doc").font(.caption) }
                         .buttonStyle(.bordered).controlSize(.small).help("Copy tên event và toàn bộ tham số")
                 }
@@ -576,7 +834,8 @@ struct ContentView: View {
 
 struct NotificationScheduleView: View {
     @EnvironmentObject private var model: StudioModel
-    @Environment(\.dismiss) private var dismiss
+    @State private var tab = 0
+    @State private var gameOnly = true
 
     private func countdown(_ d: Date) -> String {
         let delta = d.timeIntervalSince(model.alarmsDeviceNow)
@@ -591,15 +850,21 @@ struct NotificationScheduleView: View {
                 Image(systemName: "bell.badge").foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Lịch thông báo").font(.title3.bold())
-                    Text("\(model.selectedGame.title) · \(model.selectedSerial ?? "")").font(.caption).foregroundStyle(.secondary)
+                    Text("\(model.selectedGame.title) · \(model.selectedSerial.map(model.deviceLabel) ?? "")").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button { model.refreshAlarms() } label: { Label("Làm mới", systemImage: "arrow.clockwise") }
                     .disabled(model.alarmsLoading)
                 Button { copyAll(notifs + others) } label: { Label("Copy", systemImage: "doc.on.doc") }
-                    .disabled(model.alarms.isEmpty)
-                Button("Đóng") { dismiss() }.keyboardShortcut(.cancelAction)
+                    .disabled(model.alarms.isEmpty || tab != 0)
+                Button("Đóng") { model.showNotificationSchedule = false }.keyboardShortcut(.cancelAction)
             }
+            Picker("", selection: $tab) {
+                Text("Đã hẹn").tag(0)
+                Text("Đang hiển thị (\(model.activeNotifications.count))").tag(1)
+                Text("Đã ghi (\(model.notificationLog.count))").tag(2)
+            }.pickerStyle(.segmented).labelsHidden()
+            if tab == 1 { shownList } else if tab == 2 { loggedList } else {
             VStack(alignment: .leading, spacing: 10) {
                 if model.alarmsLoading { ProgressView().controlSize(.small) }
                 if let e = model.alarmsError { Text(e).foregroundStyle(.red).font(.callout) }
@@ -625,8 +890,11 @@ struct NotificationScheduleView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            Text("Chỉ đọc được lịch hẹn (giờ, kiểu, chu kỳ) từ AlarmManager của Android. Tiêu đề và nội dung thông báo được lưu trong app nên không xem được ở đây.")
-                .font(.caption).foregroundStyle(.secondary)
+            }
+            if tab == 0 {
+                Text("Chỉ đọc được lịch hẹn (giờ, kiểu, chu kỳ) từ AlarmManager của Android. Tiêu đề và nội dung thông báo được lưu trong app nên không xem được ở đây.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             if let t = model.alarmsCheckedAt {
                 Text("Kiểm tra lúc \(t.formatted(date: .omitted, time: .standard)) theo giờ trên máy tính.").font(.caption2).foregroundStyle(.tertiary)
                 if abs(model.alarmsClockOffset) > 60 {
@@ -636,8 +904,95 @@ struct NotificationScheduleView: View {
             }
         }
         .padding(18)
-        .frame(minWidth: 460, idealWidth: 640, maxWidth: 820, minHeight: 360, idealHeight: 460, maxHeight: 700, alignment: .topLeading)
+        .frame(maxWidth: 1000, maxHeight: 760, alignment: .topLeading)
         .background(Theme.bg)
+    }
+
+    /// Notifications on the phone right now, with the time each one was posted.
+    private var shownList: some View {
+        let list = model.activeNotifications.filter { !gameOnly || $0.package == model.selectedGame.rawValue }
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Toggle("Chỉ game này", isOn: $gameOnly).toggleStyle(.checkbox)
+                Spacer()
+                Button { copyShown(list) } label: { Label("Copy", systemImage: "doc.on.doc") }.disabled(list.isEmpty)
+            }
+            if model.alarmsLoading { ProgressView().controlSize(.small) }
+            if let e = model.notificationsError { Text(e).foregroundStyle(.red).font(.callout) }
+            if list.isEmpty, !model.alarmsLoading, model.notificationsError == nil {
+                Text(gameOnly ? "Game này chưa có thông báo nào đang hiển thị. Bỏ chọn \"Chỉ game này\" để xem mọi app."
+                              : "Không có thông báo nào đang hiển thị trên máy.")
+                    .foregroundStyle(.secondary).padding(.vertical, 20)
+            } else {
+                ScrollView {
+                    VStack(spacing: 0) { ForEach(list) { shownRow($0) } }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// Everything recorded since Start, including notifications the user already swiped away.
+    private var loggedList: some View {
+        let list = model.notificationLog.filter { $0.serial == model.selectedSerial && (!gameOnly || $0.notification.package == model.selectedGame.rawValue) }
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Toggle("Chỉ game này", isOn: $gameOnly).toggleStyle(.checkbox)
+                Text("\(list.filter { $0.goneAt != nil }.count) đã bị xoá / biến mất").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button { model.revealNotificationFolder() } label: { Label("Thư mục", systemImage: "folder") }
+                Button { copyShown(list.map(\.notification)) } label: { Label("Copy", systemImage: "doc.on.doc") }.disabled(list.isEmpty)
+            }
+            if list.isEmpty {
+                Text(model.isStreamingSelected
+                     ? "Chưa ghi được noti nào. Từ giờ noti nào hiện trên máy sẽ được ghi lại, kể cả khi bị vuốt bỏ."
+                     : "Bấm Start (ghi log) để app bắt đầu ghi lại thông báo. Noti đã bị xoá trước đó thì máy không còn lưu nên không lấy lại được.")
+                    .foregroundStyle(.secondary).padding(.vertical, 20)
+            } else {
+                ScrollView { VStack(spacing: 0) { ForEach(list) { shownRow($0.notification, goneAt: $0.goneAt) } } }
+            }
+            Text("Ghi mỗi 5 giây khi đang Start, lưu thêm vào <thư mục lưu>/Notifications/. Noti bắn và bị xoá trong vòng dưới 5 giây có thể bị sót.")
+                .font(.caption2).foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func shownRow(_ n: ActiveNotification, goneAt: Date? = nil) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.alarmTime(n.posted)).font(.system(size: 13, weight: .semibold, design: .monospaced))
+                Text("\(ScheduledAlarm.duration(model.alarmsDeviceNow.timeIntervalSince(n.posted))) trước").font(.caption).foregroundStyle(.secondary)
+                if let f = n.scheduledFire, abs(f.timeIntervalSince(n.posted)) > 30 {
+                    Text("hẹn \(model.alarmTime(f))").font(.caption2).foregroundStyle(.tertiary)
+                }
+                if let g = goneAt {
+                    Text("đã xoá ~\(model.alarmTime(g))").font(.caption2).foregroundStyle(.red.opacity(0.8))
+                }
+                if n.wasUpdated {
+                    Text("cập nhật \(model.alarmTime(n.updated))").font(.caption2).foregroundStyle(.orange)
+                }
+            }.frame(width: 170, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                if !n.campaign.isEmpty {
+                    Text(n.campaign).font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(Theme.accent.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
+                        .foregroundStyle(Theme.accent)
+                }
+                if !n.title.isEmpty { Text(n.title).font(.system(size: 12, weight: .medium)).lineLimit(2) }
+                if !n.text.isEmpty { Text(n.text).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2) }
+                Text(n.package + (n.ongoing ? " · đang chạy" : "")).font(.caption2).foregroundStyle(.tertiary)
+            }
+            Spacer()
+        }
+        .textSelection(.enabled)
+        .padding(.vertical, 7)
+        .overlay(alignment: .bottom) { Divider().opacity(0.5) }
+    }
+
+    private func copyShown(_ list: [ActiveNotification]) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(list.map(\.copyText).joined(separator: "\n"), forType: .string)
     }
 
     private func row(_ a: ScheduledAlarm) -> some View {
@@ -858,6 +1213,16 @@ struct FlowLayout: Layout {
     }
 }
 
+/// A list row that is only re-evaluated when its identity, selection or display mode changes (events themselves are immutable).
+struct EquatableRow: View, Equatable {
+    let id: UUID
+    let selected: Bool
+    let detailed: Bool
+    let content: () -> AnyView
+    static func == (a: EquatableRow, b: EquatableRow) -> Bool { a.id == b.id && a.selected == b.selected && a.detailed == b.detailed }
+    var body: some View { content() }
+}
+
 /// Makes every scroll view in the window use thin overlay scrollbars.
 struct SlimScrollers: NSViewRepresentable {
     final class Coordinator {
@@ -868,8 +1233,9 @@ struct SlimScrollers: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         let v = NSView()
         // Scroll views are created later too (e.g. when the details page opens), so keep checking.
-        context.coordinator.timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak v] _ in
-            Self.apply(v?.window?.contentView)
+        context.coordinator.timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak v] _ in
+            guard let w = v?.window, w.isVisible, w.isKeyWindow else { return }   // nothing to restyle while in the background
+            Self.apply(w.contentView)
         }
         return v
     }
@@ -912,4 +1278,127 @@ enum Theme {
     }
     static let bg = dyn(NSColor.white, NSColor(red: 0.10, green: 0.11, blue: 0.13, alpha: 1))
     static let panel = dyn(NSColor(red: 0.975, green: 0.975, blue: 0.975, alpha: 1), NSColor(red: 0.15, green: 0.16, blue: 0.19, alpha: 1))
+}
+
+
+/// `dumpsys meminfo` for the game: totals, where the memory goes, object counts and a trend line while the window is open.
+struct MeminfoView: View {
+    @EnvironmentObject private var model: StudioModel
+    @State private var showRaw = false
+
+    private func mb(_ kb: Int) -> String { String(format: "%.1f MB", Double(kb) / 1024) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "memorychip").foregroundStyle(Theme.accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Bộ nhớ game").font(.title3.bold())
+                    Text("\(model.selectedGame.title) · \(model.selectedSerial.map(model.deviceLabel) ?? "")" + (model.meminfo?.running == true ? " · PID \(model.meminfo?.pid ?? "")" : ""))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("Tự làm mới 10s", isOn: $model.meminfoAuto).toggleStyle(.checkbox).font(.caption)
+                    .help("Mỗi lần đọc meminfo làm game rớt khoảng 2 frame. Bật khi cần theo dõi leak, tắt khi đang đo FPS")
+                Button { model.refreshMeminfo() } label: { Label("Làm mới", systemImage: "arrow.clockwise") }.disabled(model.meminfoLoading)
+                Button { model.copyMeminfo() } label: { Label("Copy", systemImage: "doc.on.doc") }.disabled(model.meminfo?.running != true)
+                Button("Đóng") { model.closeMeminfo() }.keyboardShortcut(.cancelAction)
+            }
+            if let e = model.meminfoError {
+                Text(e).foregroundStyle(.red).font(.callout)
+            } else if let m = model.meminfo {
+                if !m.running {
+                    Text("Game chưa chạy trên máy này nên không có số liệu. Mở game rồi bấm Làm mới.").foregroundStyle(.secondary).padding(.vertical, 20)
+                } else { content(m) }
+                if !m.deviceLines.isEmpty {
+                    Text("MÁY: " + m.deviceLines.joined(separator: "  ·  ")).font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+            } else {
+                ProgressView().controlSize(.small)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(18)
+        .frame(maxWidth: 860, maxHeight: 700, alignment: .topLeading)
+        .background(Theme.bg)
+    }
+
+    private func content(_ m: MemInfoSnapshot) -> some View {
+        let hist = model.meminfoHistory
+        let delta = (hist.last?.pssKB ?? 0) - (hist.first?.pssKB ?? 0)
+        let peak = hist.map(\.pssKB).max() ?? m.totalPSS
+        let maxRow = max(1, m.rows.map(\.pssKB).max() ?? 1)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline, spacing: 22) {
+                    stat("TOTAL PSS", mb(m.totalPSS), big: true)
+                    stat("RSS", mb(m.totalRSS))
+                    stat("Swap PSS", mb(m.swapPSS))
+                    stat("Đỉnh (phiên này)", mb(peak))
+                    if hist.count > 1 { stat("Thay đổi", (delta >= 0 ? "+" : "") + mb(delta), tint: delta > 20 * 1024 ? .orange : nil) }
+                }
+                if hist.count > 1 {
+                    Sparkline(values: hist.map { Double($0.pssKB) })
+                        .frame(height: 54)
+                    Text("Xu hướng TOTAL PSS từ \(hist.first!.date.formatted(date: .omitted, time: .standard)) (\(hist.count) mẫu). Tăng đều mà không giảm khi qua màn hình khác thường là dấu hiệu leak.")
+                        .font(.caption2).foregroundStyle(.tertiary)
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("PHÂN BỔ (App Summary, PSS)").font(.caption2.bold()).foregroundStyle(.secondary)
+                    ForEach(m.rows) { r in
+                        HStack(spacing: 10) {
+                            Text(r.name).font(.system(size: 12)).frame(width: 110, alignment: .leading)
+                            GeometryReader { g in
+                                RoundedRectangle(cornerRadius: 3).fill(Theme.accent.opacity(0.7))
+                                    .frame(width: max(2, g.size.width * CGFloat(r.pssKB) / CGFloat(maxRow)))
+                            }.frame(height: 10)
+                            Text(mb(r.pssKB)).font(.system(size: 12, design: .monospaced)).frame(width: 90, alignment: .trailing)
+                        }
+                    }
+                }
+                if !m.objects.isEmpty {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("ĐỐI TƯỢNG").font(.caption2.bold()).foregroundStyle(.secondary)
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 8, alignment: .leading)], alignment: .leading, spacing: 6) {
+                            ForEach(Array(m.objects.enumerated()), id: \.offset) { _, o in
+                                HStack(spacing: 6) {
+                                    Text(o.name).font(.caption).foregroundStyle(.secondary)
+                                    Text("\(o.count)").font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                }
+                            }
+                        }
+                    }
+                }
+                DisclosureGroup("Dữ liệu gốc (dumpsys meminfo)", isExpanded: $showRaw) {
+                    Text(m.raw).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }.font(.caption)
+                Text("Cập nhật \(m.date.formatted(date: .omitted, time: .standard)) theo giờ máy tính. PSS là phần RAM thực sự tính cho app (đã chia đều vùng dùng chung).")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func stat(_ label: String, _ value: String, big: Bool = false, tint: Color? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+            Text(value).font(.system(size: big ? 22 : 15, weight: .semibold, design: .monospaced)).foregroundStyle(tint ?? .primary)
+        }
+    }
+}
+
+struct Sparkline: View {
+    let values: [Double]
+    var body: some View {
+        GeometryReader { g in
+            let lo = values.min() ?? 0, hi = max(values.max() ?? 1, lo + 1)
+            Path { p in
+                for (i, v) in values.enumerated() {
+                    let x = g.size.width * CGFloat(i) / CGFloat(max(1, values.count - 1))
+                    let y = g.size.height * (1 - CGFloat((v - lo) / (hi - lo)))
+                    i == 0 ? p.move(to: CGPoint(x: x, y: y)) : p.addLine(to: CGPoint(x: x, y: y))
+                }
+            }.stroke(Theme.accent, lineWidth: 1.6)
+        }
+    }
 }

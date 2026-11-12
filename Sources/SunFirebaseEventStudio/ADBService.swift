@@ -1,4 +1,6 @@
 import Foundation
+import CoreGraphics
+import ImageIO
 
 @MainActor
 final class ADBService: ObservableObject {
@@ -103,9 +105,10 @@ final class ADBService: ObservableObject {
                 let modelPart = parts.first(where: { $0.hasPrefix("model:") })?.replacingOccurrences(of: "model:", with: "") ?? ""
                 next.append(ADBDevice(serial: parts[0], state: parts[1], model: modelPart))
             }
-            devices = next
-            status = next.isEmpty ? "Connect an Android device with USB debugging enabled" : "\(next.count) device(s) detected"
-        } catch { status = error.localizedDescription }
+            if devices != next { devices = next }
+            let text = next.isEmpty ? "Connect an Android device with USB debugging enabled" : "\(next.count) device(s) detected"
+            if status != text { status = text }
+        } catch { if status != error.localizedDescription { status = error.localizedDescription } }
     }
 
     /// Which game the device is set up to debug, and whether FA / FA-SVC logging is already verbose.
@@ -166,6 +169,29 @@ final class ADBService: ObservableObject {
     }
 }
 
+extension ADBService {
+    /// Separate stream for crashes: Java fatals, native tombstones, ANRs, Unity exceptions, process kills.
+    /// Only the tags that can carry them are opened below warning level, so the volume stays small.
+    func startCrashLogcat(serial: String, onLine: @escaping @Sendable (String) -> Void) throws -> Process {
+        guard let adbPath else { throw NSError(domain: "ADB", code: 1, userInfo: [NSLocalizedDescriptionKey: "ADB is not ready yet."]) }
+        let p = Process()
+        let pipe = Pipe()
+        p.executableURL = adbPath
+        p.arguments = ["-s", serial, "logcat", "-T", "1", "-v", "threadtime", "-b", "main,system,crash",
+                       "*:W", "DEBUG:I", "libc:I", "ActivityManager:I", "lmkd:I", "AndroidRuntime:I"]
+        p.standardOutput = pipe
+        p.standardError = pipe
+        let pending = LineBuffer()
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty { handle.readabilityHandler = nil; pending.flush().forEach(onLine); return }
+            pending.append(data).forEach(onLine)
+        }
+        try p.run()
+        return p
+    }
+}
+
 final class LineBuffer: @unchecked Sendable {
     private var tail = Data()
     private let lock = NSLock()
@@ -211,23 +237,52 @@ extension ADBService {
         return true
     }
 
-    /// `exec-out screencap -p` streams a PNG over stdout; written straight to `url`.
+    /// Raw `screencap` (no `-p`) skips the slow on-phone PNG compression: the phone just streams RGBA over USB and the Mac encodes the PNG.
+    /// Falls back to `screencap -p` when the raw header is not a plain RGBA_8888 frame (HDR / wide-colour panels).
     func screenshot(serial: String, to url: URL) async throws {
         guard let adbPath else { throw NSError(domain: "ADB", code: 1, userInfo: [NSLocalizedDescriptionKey: "ADB is not ready yet."]) }
         try await Task.detached {
-            let p = Process()
-            let out = Pipe()
-            p.executableURL = adbPath
-            p.arguments = ["-s", serial, "exec-out", "screencap", "-p"]
-            p.standardOutput = out
-            try p.run()
-            let data = out.fileHandleForReading.readDataToEndOfFile()
-            p.waitUntilExit()
-            guard p.terminationStatus == 0, data.count > 100 else {
-                throw NSError(domain: "ADB", code: 3, userInfo: [NSLocalizedDescriptionKey: "Không chụp được màn hình (máy có thể đang khóa hoặc app chặn chụp)."])
+            func capture(_ args: [String]) throws -> Data {
+                let p = Process()
+                let out = Pipe()
+                p.executableURL = adbPath
+                p.arguments = ["-s", serial, "exec-out"] + args
+                p.standardOutput = out
+                p.standardError = FileHandle.nullDevice
+                try p.run()
+                let data = out.fileHandleForReading.readDataToEndOfFile()
+                p.waitUntilExit()
+                guard p.terminationStatus == 0, data.count > 100 else {
+                    throw NSError(domain: "ADB", code: 3, userInfo: [NSLocalizedDescriptionKey: "Không chụp được màn hình (máy có thể đang khóa hoặc app chặn chụp)."])
+                }
+                return data
             }
-            try data.write(to: url)
+            if let raw = try? capture(["screencap"]), let png = Self.pngFromRawScreencap(raw) {
+                try png.write(to: url)
+            } else {
+                try capture(["screencap", "-p"]).write(to: url)
+            }
         }.value
+    }
+
+    /// Header is width, height, format (+ colour space on Android 10+) as little-endian UInt32; the rest is the pixels.
+    nonisolated static func pngFromRawScreencap(_ data: Data) -> Data? {
+        guard data.count > 16 else { return nil }
+        func u32(_ i: Int) -> Int { data.withUnsafeBytes { Int($0.loadUnaligned(fromByteOffset: i, as: UInt32.self)) } }
+        let w = u32(0), h = u32(4), format = u32(8)
+        guard format == 1, w > 0, h > 0, w < 10_000, h < 10_000 else { return nil }   // 1 = RGBA_8888
+        let header = data.count - w * h * 4
+        guard header == 12 || header == 16 else { return nil }
+        let pixels = data.subdata(in: header..<data.count)
+        guard let provider = CGDataProvider(data: pixels as CFData),
+              let image = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                                  provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { return nil }
+        let out = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(out, "public.png" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dest, image, nil)
+        return CGImageDestinationFinalize(dest) ? out as Data : nil
     }
 
     /// Recording runs on the device (Android caps one segment at 3 minutes); `onExit` fires when it ends for any reason.
@@ -260,12 +315,93 @@ extension ADBService {
     /// Alarms plus the phone's own clock: QA phones are often set to another date/time zone, and every
     /// countdown has to be measured against the phone's "now", not the Mac's.
     func fetchAlarms(serial: String, package: String) async throws -> (alarms: [ScheduledAlarm], deviceNow: Date, timeZone: TimeZone) {
-        let clock = try await run(["-s", serial, "shell", "date +%s; getprop persist.sys.timezone"])
-        let lines = clock.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
-        let deviceNow = lines.first.flatMap(TimeInterval.init).map { Date(timeIntervalSince1970: $0) } ?? Date()
-        let tz = lines.dropFirst().first.flatMap { TimeZone(identifier: $0) } ?? .current
+        let (deviceNow, tz) = try await deviceClock(serial: serial)
         let dump = try await run(["-s", serial, "shell", "dumpsys", "alarm"])
         let alarms = await Task.detached { AlarmParser.parse(dump: dump, package: package, now: deviceNow) }.value
         return (alarms, deviceNow, tz)
+    }
+
+    /// Notifications currently shown on the phone, with when each was first posted, plus the phone's own "now".
+    func fetchActiveNotifications(serial: String) async throws -> (list: [ActiveNotification], deviceNow: Date) {
+        let out = try await run(["-s", serial, "shell", "date +%s; dumpsys notification --noredact"])
+        let now = out.prefix { $0 != "\n" }.trimmingCharacters(in: .whitespaces)
+        let deviceNow = TimeInterval(now).map { Date(timeIntervalSince1970: $0) } ?? Date()
+        let list = await Task.detached { ActiveNotificationParser.parse(dump: out) }.value
+        return (list, deviceNow)
+    }
+
+    /// `dumpsys meminfo` of one app plus the phone's total / free RAM lines.
+    func fetchMeminfo(serial: String, package: String) async throws -> MemInfoSnapshot {
+        let app = try await run(["-s", serial, "shell", "dumpsys meminfo \(package); exit 0"])
+        let device = (try? await run(["-s", serial, "shell", "dumpsys meminfo | grep -E 'Total RAM|Free RAM|Used RAM|Lost RAM|ZRAM'; exit 0"])) ?? ""
+        return await Task.detached { MemInfoParser.parse(package: package, app: app, device: device) }.value
+    }
+
+    /// Everything the phone still remembers about old crashes: the crash/main/system logcat buffers and DropBox.
+    func fetchCrashHistory(serial: String) async -> (logcat: String, dropbox: String) {
+        let log = (try? await run(["-s", serial, "logcat", "-d", "-v", "threadtime", "-b", "main,system,crash",
+                                   "*:W", "DEBUG:I", "libc:I", "ActivityManager:I", "lmkd:I", "AndroidRuntime:I"])) ?? ""
+        let box = (try? await run(["-s", serial, "shell",
+            "for t in data_app_crash data_app_anr data_app_native_crash system_app_crash SYSTEM_TOMBSTONE; do dumpsys dropbox --print $t; done; exit 0"])) ?? ""
+        return (log, box)
+    }
+
+    /// Facts worth having next to a crash: phone, app version, free RAM and (for a live crash) the process's last log lines.
+    func crashContext(serial: String, package: String, pid: String?) async -> String {
+        func sh(_ c: String) async -> String { ((try? await run(["-s", serial, "shell", c + "; exit 0"])) ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        var out = ""
+        let p = await sh("getprop ro.product.manufacturer; getprop ro.product.model; getprop ro.build.version.release; getprop ro.build.version.sdk").components(separatedBy: "\n")
+        if p.count >= 4 { out += "Phone:   \(p[0]) \(p[1]) · Android \(p[2]) (SDK \(p[3]))\n" }
+        if !package.isEmpty {
+            let v = await sh("dumpsys package \(package) 2>/dev/null | grep -E 'versionName|versionCode' | head -2").components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: "  ")
+            if !v.isEmpty { out += "App:     \(package)  \(v)  (phiên bản đang cài lúc đọc)\n" }
+        }
+        let mem = await sh("dumpsys meminfo | grep -E 'Total RAM|Free RAM|Used RAM|Lost RAM'")
+        if !mem.isEmpty { out += "RAM của máy (lúc đọc):\n" + mem.components(separatedBy: "\n").map { "  " + $0.trimmingCharacters(in: .whitespaces) }.joined(separator: "\n") + "\n" }
+        if let pid, !pid.isEmpty, pid != "?" {
+            let log = await sh("logcat -d -v threadtime --pid=\(pid) -t 250")
+            if !log.isEmpty { out += "\n-- 250 dòng log cuối của process \(pid) --\n" + log + "\n" }
+        }
+        return out
+    }
+
+    /// One round trip for everything the Performance window shows. `layer` is the SurfaceFlinger layer found last time ("" = look it up).
+    func fetchPerf(serial: String, package: String, layer: String) async throws -> String {
+        let script = """
+        P=\(package); LAYER='\(layer)'; PID=$(pidof $P | cut -d' ' -f1); echo "---PID"; echo "$PID"
+        if [ -n "$PID" ]; then
+          echo "---TOP"; top -b -n 1 -p $PID 2>&1 | head -12
+          echo "---STATUS"; grep -E "VmRSS|Threads" /proc/$PID/status
+          if [ -z "$LAYER" ]; then
+            LAYER=$(dumpsys SurfaceFlinger --list | grep -oE "SurfaceView\\[$P/[^]]*\\]\\(BLAST\\)#[0-9]+" | head -1)
+            [ -z "$LAYER" ] && LAYER=$(dumpsys SurfaceFlinger --list | grep -oE "$P/[A-Za-z0-9_.]*#[0-9]+" | head -1)
+          fi
+          echo "---LAYER"; echo "$LAYER"
+          echo "---LAT"; [ -n "$LAYER" ] && dumpsys SurfaceFlinger --latency "$LAYER"
+        fi
+        echo "---THERMAL"; dumpsys thermalservice | grep -E "Thermal Status|mName=(CPU|GPU|SKIN)" | head -4
+        echo "---BATT"; dumpsys battery | grep -E "level|temperature"
+        exit 0
+        """
+        return try await run(["-s", serial, "shell", script])
+    }
+
+    /// Kills logcat processes this app started on the phone that nobody is reading any more (the Mac side died without cleaning up).
+    /// Only call for a phone the app is not streaming from. The `[C]` / `[h]` brackets keep the shell from matching itself.
+    func killStaleOnDevice(serial: String) async -> Int {
+        let script = """
+        n=0; for pid in $(ps -A -o PID,ARGS | grep -E "logcat -T 1 -v time -s FA FA-SV[C]|logcat -T 1 -v threadtime -b main,system,cras[h]" | grep -v grep | sed 's/^ *//' | cut -d' ' -f1); do kill $pid && n=$((n+1)); done; echo $n; exit 0
+        """
+        let out = (try? await run(["-s", serial, "shell", script])) ?? ""
+        return Int(out.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "\n").last ?? "0") ?? 0
+    }
+
+    private func deviceClock(serial: String) async throws -> (now: Date, timeZone: TimeZone) {
+        let clock = try await run(["-s", serial, "shell", "date +%s; getprop persist.sys.timezone"])
+        let lines = clock.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+        let now = lines.first.flatMap(TimeInterval.init).map { Date(timeIntervalSince1970: $0) } ?? Date()
+        let tz = lines.dropFirst().first.flatMap { TimeZone(identifier: $0) } ?? .current
+        return (now, tz)
     }
 }
