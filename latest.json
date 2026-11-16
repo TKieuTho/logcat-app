@@ -1,6 +1,6 @@
 {
-  "version": "0.6.7",
-  "date": "2026-10-30",
-  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.6.7/Logcat-0.6.7-macOS-arm64.zip",
-  "notes": "Dừng được bất kỳ máy nào từ header, lịch thông báo tính theo đồng hồ điện thoại."
+  "version": "0.6.9",
+  "date": "2026-11-16",
+  "url": "https://github.com/TKieuTho/logcat-app/releases/download/v0.6.9/Logcat-0.6.9-macOS-arm64.zip",
+  "notes": "Ghi lại crash, xem hiệu năng và bộ nhớ game, chụp màn hình nhanh hơn, sửa đọc thông báo trên Samsung."
 }
